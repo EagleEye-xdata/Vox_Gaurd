@@ -1,0 +1,1 @@
+Replace the unvalidated heuristic with an ASVspoof-evaluated classifier implementing SpoofClassifier.predict(chunk). No trained checkpoint is bundled. Speaker matching requires enrollment and a separately validated embedding model.
