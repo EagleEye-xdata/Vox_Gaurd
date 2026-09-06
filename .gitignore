@@ -1,0 +1,10 @@
+.venv/
+node_modules/
+dist/
+__pycache__/
+.pytest_cache/
+*.db
+*.db-*
+*.log
+demo_audio/*.wav
+!demo_audio/.gitkeep
