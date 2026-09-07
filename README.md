@@ -2,11 +2,27 @@
 
 Local voice-cloning detection **demonstration** for SIH26104 (AICTE), team vox_Guard. Implements the supplied architecture plan's pipeline, with the pasted build prompt's local-MVP boundaries. The reference PDF informs temporal consistency, feature coverage, secondary verification, and evaluation priorities.
 
+## Services
+
+The backend is split the way `docs/01-ARCHITECTURE.md` §2 specifies, in two processes:
+
+| Process | Port | Owns |
+|---|---|---|
+| **Go gateway** (`gateway/`) | 8000 | API, schema validation, risk fusion, session aggregation, decision service, alerts, audit ledger, WebSocket |
+| **Python ML sidecar** (`backend/app/sidecar.py`) | 8801 (loopback) | Preprocess, VAD, feature extraction, spoof detector, speaker verification |
+| Vite dev server (`frontend/`) | 5173 | Dashboard; proxies `/api` and `/ws` to the gateway |
+
+**Audio never leaves the Python process.** The gateway asks the sidecar for the *analysis* of the
+next window and receives derived features and scores. The two endpoints that do carry caller audio
+(`POST /api/v1/detect`, `POST /api/v1/enrolments`) are reverse-proxied straight through without
+being decoded in Go.
+
 ## Run on Windows
 
-Python 3.11+ and Node.js 20+ are required. From this directory:
+Python 3.11+, Go 1.27+, and Node.js 20+ are required.
 
 ```powershell
+winget install GoLang.Go
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r backend/requirements.txt
 .\.venv\Scripts\python.exe backend/generate_fixtures.py
@@ -16,21 +32,27 @@ npm ci
 
 `backend/requirements-lock.txt` records the exact Python versions used for verification on Windows/Python 3.11; install it instead of `requirements.txt` to reproduce that environment.
 
-In one terminal, from `voiceshield-ai/backend`:
+`./start.ps1` from the project root builds the gateway, starts all three services in the
+background, and stops them when you press Enter in the launcher terminal. It refuses to take over
+occupied ports.
+
+To run them by hand, in three terminals:
 
 ```powershell
-..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
+# backend/
+..\.venv\Scripts\python.exe -m app.sidecar
 
-In another terminal, from `voiceshield-ai/frontend`:
+# repo root
+go -C gateway run ./cmd/voxguard
 
-```powershell
+# frontend/
 npm run dev
 ```
 
-Open http://localhost:5173. API documentation: http://127.0.0.1:8000/docs. Use one backend worker; active calls and alerts are in process memory. Do not expose this unauthenticated prototype beyond loopback.
-
-After installation, `./start.ps1` from the project root starts both services in the background and stops them when you press Enter in the launcher terminal. It refuses to take over occupied ports.
+Open http://localhost:5173. Gateway health: http://127.0.0.1:8000/api/v1/health — it reports
+`status: degraded` when the sidecar is unreachable rather than pretending to be healthy with a
+silently absent detector. Use one gateway process; active calls and alerts are in process memory.
+Do not expose this unauthenticated prototype beyond loopback.
 
 ## Demo walkthrough
 
@@ -85,18 +107,26 @@ Additional local endpoints: health, audio list, call list, stop simulation, ledg
 
 The application never writes incoming raw audio or reconstructable waveforms. It reads pre-existing source WAVs, processes each window in memory, clears owned input/processed NumPy buffers, and retains only derived features. The displayed waveform is a 96-bin RMS envelope. User-supplied source files remain on disk by design; they are not recordings made by this app. Python, native-library scratch memory, OS paging, and external OneDrive synchronization are not controlled secure-erasure boundaries.
 
-Only event type, call ID, risk score, and timestamp enter the local SQLite ledger. Call labels, transaction context, audio, and feature vectors are excluded. An altered middle record is detectable. A local database owner can rewrite the entire chain or truncate its tail; an external trusted checkpoint or real permissioned network would be required to detect that. This is **tamper-evident, not tamper-proof or immutable**. Calls/alerts disappear on backend restart; ledger entries persist. `LEDGER_PATH` overrides the database location.
+Only event type, call ID, risk score, and timestamp enter the local SQLite ledger. Call labels, transaction context, audio, and feature vectors are excluded. An altered middle record is detectable. A local database owner can rewrite the entire chain or truncate its tail; an external trusted checkpoint or real permissioned network would be required to detect that. This is **tamper-evident, not tamper-proof or immutable**. Calls/alerts disappear on gateway restart; ledger entries persist. `LEDGER_PATH` overrides the database location.
 
 ## Verify
 
-From `backend`:
-
 ```powershell
-..\.venv\Scripts\python.exe -m pytest tests -q
-..\.venv\Scripts\python.exe -m app.cli ../demo_audio/fixture-variable.wav
+# Go: fusion, session aggregation, decisions, alerts, audit, gateway API
+go -C gateway test ./...
+
+# Python: DSP, VAD, features, detector, speaker verification, consent, audio boundary
+.\.venv\Scripts\python.exe -m pytest backend/tests -q
+
+# One window at a time, printed as NDJSON
+cd backend; ..\.venv\Scripts\python.exe -m app.cli ../demo_audio/fixture-variable.wav
 ```
 
-The CLI prints measured feature vectors and scores for every window. Tests cover silence/noise rejection, feature sanity, smoothing and alert persistence, speaker absence, context bounds, tamper detection, buffer clearing, strict schemas, complete WebSocket streaming, escalation, and ledger integrity.
+The Go suite includes `gateway/internal/scoring/golden_test.go`, which replays scoring vectors
+emitted from the Python implementation the fusion was ported from. That is the evidence the port
+did not change the arithmetic — the arithmetic being exactly what the v2 spec exists to correct.
+Regenerate the vectors with `python backend/tools/emit_golden.py` only when a policy change is
+intended.
 
 From `frontend`: `npm run build`.
 
@@ -104,6 +134,6 @@ From `frontend`: `npm run build`.
 
 - **No validated spoof detector or accuracy claims.** Pitch-regular genuine voices can be flagged and sophisticated clones can evade the heuristic. Codec noise and accents need evaluation. Energy/flatness VAD can accept tonal non-speech and reject unvoiced speech.
 - Replace the classifier with an evaluated AASIST/RawNet2/wav2vec checkpoint, and train/evaluate with separate speaker/generator splits. Benchmark precision, recall, F1, false positives/negatives, and end-to-end latency on ASVspoof plus unseen sources.
-- Add proper prosody modeling, validated formant tracks, speaker enrollment/ECAPA matching, and calibrated fusion before deployment. The default architecture uses librosa/NumPy/SciPy without PyTorch/torchaudio, avoiding unused heavyweight inference dependencies until a real checkpoint is supplied.
+- Add proper prosody modeling, validated formant tracks, speaker enrollment/ECAPA matching, and calibrated fusion before deployment. The Python sidecar uses librosa/NumPy/SciPy without PyTorch/torchaudio, avoiding unused heavyweight inference dependencies until a real checkpoint is supplied.
 - Real telecom/VoIP integration, a permissioned blockchain network, bank webhooks, cross-institution sharing, and multilingual coverage remain stretch goals, matching the plan and deck.
 - For production: authentication, authorization, request-size/rate limits, durable session storage, retention controls, backpressure, external ledger anchoring, and deployment hardening. This is a single-machine hackathon prototype.

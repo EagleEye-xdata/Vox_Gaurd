@@ -22,6 +22,8 @@ Git Bash · Repo on `F:\vox_gaurd`
 | ffmpeg | **8.1.1** (winget Gyan build) | Codec laundering for T-5.5: G.711, Opus, AMR-NB. Also 8 kHz narrowband channel augmentation for D-2. |
 | git-lfs | **3.7.1** | Required for Hugging Face dataset pulls. |
 | Network egress | Available (web search + HF reachable) | Dataset download viable; mirror early per `12` §0. |
+| Go toolchain | ✅ **go1.27.1** at `C:\Program Files\Go`, installed 2026-09-07 via `winget install GoLang.Go` | Gateway, fusion, session, decision, alerts and ledger are Go per `01` §2. Pure-Go SQLite (`modernc.org/sqlite`) means no cgo and no C toolchain to build or ship. |
+| Go race detector | ❌ **Unavailable on this box** | `-race` needs cgo. The only gcc on PATH is `C:\MinGW` (`mingw32`, 32-bit: *"sorry, unimplemented: 64-bit mode not compiled in"*), and WSL2's gcc has no libc headers (`libc6-dev` absent, `sudo` needs a password). See Gaps. |
 | Training stack | ✅ transformers 4.57.6 · datasets 5.0.1 · peft 0.20.0 · accelerate 1.14.0 · **bitsandbytes 0.50.2** | Installed 2026-09-07. |
 | bnb 4-bit CUDA backend | ✅ **Verified**: `Linear4bit` fp16 forward pass on the 4060 succeeds | The risky part on Windows. QLoRA is viable here. |
 | `Qwen2AudioForConditionalGeneration` | ✅ Available in transformers 4.57.6; NF4 + double-quant config accepted; `peft.LoraConfig` OK | D-1 is buildable on this box. |
@@ -66,6 +68,7 @@ Git Bash · Repo on `F:\vox_gaurd`
 | Native Asterisk on Windows | Not supported | Asterisk in Docker with the **AudioSocket** channel driver streaming 8 kHz PCM over TCP. |
 | Indian-language spoof corpus | Does not exist off the shelf | Generate in-house with Indic Parler-TTS (Apache 2.0) / IndicF5, bound by invariant 14. |
 | CI runner | None configured | Tests run locally; record results in `docs/verification.md` with the date and the command. |
+| `go test -race` | No 64-bit C toolchain | Concurrency in `gateway/internal/session` is currently guarded by review and by the `httptest` suite, **not** by the race detector. To close this, either `winget install BrechtSanders.WinLibs.POSIX.UCRT` (64-bit mingw-w64 on Windows) or, in WSL2, `sudo apt install build-essential` and then `go test -race ./...`. Until one of those is done, do not claim the gateway is race-free. |
 
 ---
 

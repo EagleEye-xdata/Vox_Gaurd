@@ -32,7 +32,7 @@ v2's core corrections. **Phase 0 is roughly two-thirds complete.**
 | Day 1 — data, disjoint splits, detector skeleton | ❌ **Not started** | No corpora, no splits, no training loop. Only synthetic sine fixtures + Windows TTS. |
 | Day 2 — EER, calibration, MC-dropout confidence | ❌ **Not started** | `calibrator_version = "identity-demo@0.0.0-unvalidated"`. No measured FAR/FRR anywhere. |
 | Day 3 — fusion + session logic + hash chain | ✅ **Strong** | See §3. |
-| Day 4 — interface | ✅ **Mostly done** | See §3. |
+| Day 4 — interface | ✅ **Mostly done** | See §3. Backend is now Go + a Python ML sidecar per `01` §2. |
 | Day 5 — survive the stage | ⚠️ **Partial** | Chaos toggle exists; no model card, no consent log, no scripted demo, no measured numbers. |
 
 ### Phase 0 exit gate
@@ -50,28 +50,49 @@ v2's core corrections. **Phase 0 is roughly two-thirds complete.**
 
 ## 3. What is actually built
 
-**Backend** (`backend/app/`, FastAPI + NumPy/SciPy/librosa, no PyTorch in the default path):
+**Gateway** (`gateway/`, Go 1.27, stdlib `net/http` + three small modules):
+
+| Package | State |
+|---|---|
+| `internal/scoring` | `03` §1 evaluation order, active-signal renormalisation, recursive context renormalisation, gated trust discount, floors-last via `max()`, in-code sum assertion ✅ **Ported from Python, differentially tested** |
+| `internal/scoring.SessionRisk` | `04` §3–4 EWMA α=.35 + decaying peak δ=.98 + 2-of-3 / 5-of-6 hysteresis + one-alert-per-escalation w/ SHA-256 idempotency key ✅ |
+| `internal/numeric` | CPython-identical `round()` (round-half-to-even via `strconv`), because `math.Round` would move threshold-adjacent windows into a different band ✅ |
+| `internal/policy` | Versioned pack, `demo-detector-first@2.1.0` ✅ |
+| `internal/decision` | `02` §8 band → decision, monotonic WAL seq, HMAC origin signature, audited overrides ✅ |
+| `internal/alerts` | `02` §10/§10.1 idempotent alerts, band-scaled SLA, closed-enum resolutions, appeals ✅ |
+| `internal/ledger` | Real `sha256(payload ‖ prev)` chain per `02` §9.1, SQLite WAL + `synchronous=FULL`, **plus an HMAC origin signature that the Python version lacked** ✅ |
+| `internal/schema` | `DisallowUnknownFields` (= Pydantic `extra="forbid"`), enum/range checks, attestation-provenance validator ✅ |
+| `internal/session` | Session orchestrator: per-call goroutine, event log, alert/audit fan-out ✅ |
+| `internal/httpapi` | All 23 endpoints, WebSocket, CORS, FastAPI-shaped `{"detail": ...}` errors so the dashboard is unchanged ✅ |
+| `internal/sidecar` | Client + reverse proxy for the Python service ✅ |
+
+**ML sidecar** (`backend/app/`, FastAPI + NumPy/SciPy/librosa, no PyTorch in the default path):
 
 | Module | State |
 |---|---|
+| `sidecar.py` | Internal loopback service; owns the audio boundary, zeroes every buffer in `finally` ✅ |
 | `ingestion.py` | 3.0 s windows, 1.0 s hop, stereo→mono, `resample_poly` to 16 kHz ✅ |
 | `preprocessing.py` | DC removal, 80–3800 Hz Butterworth, energy + in-band flatness VAD, noise gate ✅ |
 | `features.py` | MFCC, log-mel, YIN pitch, jitter/shimmer proxies, spectral flatness, RMS envelope ✅ |
 | `detection.py` | `SpoofClassifier` ABC + `HeuristicClassifier` — **unvalidated**, and see DEF-1 |
-| `risk_scoring.py` | `03` §1 evaluation order, active-signal renormalisation, recursive context renormalisation, gated trust discount, floors-last via `max()`, in-code sum assertion ✅ **Faithful to spec** |
-| `risk_scoring.SessionRisk` | `04` §3–4 EWMA α=.35 + decaying peak δ=.98 + 2-of-3 / 5-of-6 hysteresis + one-alert-per-escalation w/ SHA-256 idempotency key ✅ |
-| `ledger.py` | Real `sha256(payload ‖ prev)` chain per `02` §9.1, SQLite WAL + `synchronous=FULL` ✅ |
-| `schemas.py` | Pydantic v2 strict models, `extra="forbid"`, attestation-provenance validator ✅ |
+| `speaker_verification.py` | Enrolment, 24-d embedding, consent gate (invariant 14) ✅ |
 
 **Frontend** (`frontend/src/`, React 19 + Vite): band glyph vocabulary (● ◆ ▲ ◌), "Not assessed",
 persistent degraded strip, factor bars, **applied floors rendered separately from evidence**,
 versions always visible, `aria-live` split correctly (assertive for band, off for score ticks),
 `prefers-reduced-motion`, "Live assessment paused — reconnecting". Conforms well to `09`.
 
-**Tests** (`backend/tests/test_pipeline.py`): **23 tests, all passing** as of 2026-09-07. See
-`docs/verification.md` for the run record.
+**Tests**, all run 2026-09-07:
 
----
+| Suite | Command | Result |
+|---|---|---|
+| Go | `go -C gateway test ./...` | **162 passing** |
+| Python | `python -m pytest backend/tests -q` | **15 passing** |
+
+The Go total includes 91 window cases and 8 session replays from
+`gateway/internal/scoring/testdata/golden_windows.json`, emitted by `backend/tools/emit_golden.py`
+from the Python implementation the fusion was ported from. That file is the evidence the port did
+not change the arithmetic. See `docs/verification.md` for the run record.
 
 ## 4. Defects found in this codebase
 
@@ -253,8 +274,10 @@ Expect the multilingual number to be far worse than the English one. **Report bo
 |---|---|---|---|
 | DEV-1 | Policy weights ai .60 / .20 / .20, bands 40/70 | Suits detector-only Phase 0 with no enrolment; `mandatory_speaker_verification: true` would floor every window at 50 | `03` §7 |
 | DEV-2 | Detector latency will exceed 800 ms | D-1 chose a 7B audio LLM on an 8 GB laptop GPU | `01` §4, `[ASSUMPTION-2]` |
-| DEV-3 | Single Python process + React app, own `/api/v1` surface | Phase 0 simplification the spec explicitly endorses | `00` §6, `12` §1 |
+| DEV-3 | ~~Single Python process~~ → **two processes: Go gateway + Python ML sidecar** | **Resolved 2026-09-07.** This is no longer a deviation: `01` §2 always specified Go for the gateway, orchestrator, fusion, aggregator, decision, alert and audit services, and Python only for preprocess/VAD, detection and speaker verification. The all-Python build was the Phase 0 shortcut; the split now matches the spec. | `01` §2 |
 | DEV-4 | Model weights research-only | MLAAD CC BY-NC (D-3) | `05` §1 |
+| DEV-5 | Go↔Python transport is loopback **HTTP/JSON**, not gRPC | `01` §2 specifies a gRPC bidi stream. HTTP/JSON needs no protoc, no `grpcio` build, and no new dependency on either side; the seam is a real process boundary either way, so swapping the transport later is contained to `gateway/internal/sidecar` and `backend/app/sidecar.py`. | `01` §2 |
+| DEV-6 | The sidecar returns **analyses, not audio**, and Go pulls windows one at a time | `01` §2 draws the audio arrow *into* Python from a Go orchestrator that owns a ring buffer. Inverting it — Python owns the file and the buffer, Go asks for the next analysis — is what makes invariant 1 structurally true rather than a promise: there is no message shape in which the gateway could receive samples. Revisit when live Asterisk ingest (D-2) makes Go the actual arrival point for audio. | `01` §2, invariant 1 |
 
 ---
 
@@ -279,5 +302,6 @@ Expect the multilingual number to be far worse than the English one. **Report bo
 
 | Date | Change |
 |---|---|
+| 2026-09-07 (3) | **Backend split into a Go gateway and a Python ML sidecar**, converging on `01` §2 (DEV-3 resolved). Ported to Go: risk fusion, session aggregation, decision service, alerts, hash-chained ledger, request validation, all 23 endpoints and the WebSocket. Kept in Python: ingestion, preprocessing/VAD, features, detector, speaker verification. Port guarded by 91 golden window vectors + 8 session replays emitted from the pre-port Python implementation. Ledger gained the HMAC origin signature invariant 9 requires and the Python version lacked. Frontend unchanged — same port, same paths, same `{"detail": ...}` error shape. Suites: **162 Go + 15 Python passing**. |
 | 2026-09-07 (2) | **DEF-1…DEF-6 all fixed**, each with a regression test. Detector range made attainable (log-axis flatness map + YIN outlier rejection) → HIGH reachable from the detector alone at 90.95, 21-pt margin. Language gating, simulated adversarial floor, degraded threshold delta, policy rename to `demo-detector-first@2.1.0`. Consent-log gate added and **proven to bite**. Suite 14 → **23 passing**. `verification.md` rewritten. |
 | 2026-09-07 | Handoff created. v2 spec set imported to `docs/`. `CLAUDE.md`, `CONSENT_LOG.md`, `CAPABILITY_MATRIX.md` written. Codebase audited against spec; DEF-1…DEF-6 recorded. Environment and dataset licences verified. Decisions D-1…D-6 confirmed with the human. |

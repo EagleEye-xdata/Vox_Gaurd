@@ -38,29 +38,49 @@
                │  WebSocket  /ws/audio/{call_id}
                ▼
 ┌─────────────────────────────────────────────┐
-│           BACKEND (FastAPI / Python)         │
-│  Uvicorn ASGI @ http://127.0.0.1:8000       │
+│           GATEWAY (Go) @ 127.0.0.1:8000     │
+│  net/http · coder/websocket · modernc sqlite│
+│                                             │
+│  schema validate → session orchestrator     │
+│         ┌───────────────┐                   │
+│         │ Risk Fusion   │  active-signal    │
+│         │ (03 §1)       │  renormalisation  │
+│         └──────┬────────┘                   │
+│                ▼                            │
+│         ┌───────────────┐                   │
+│         │ Session Aggr. │  EWMA + peak      │
+│         │ (04 §3-5)     │  + hysteresis     │
+│         └──────┬────────┘                   │
+│                ▼                            │
+│         ┌───────────────┐                   │
+│         │   Decision    │                   │
+│         └──┬─────────┬──┘                   │
+│            ▼         ▼                      │
+│      ┌────────┐  ┌────────────┐             │
+│      │ Alerts │  │   Ledger   │             │
+│      └────────┘  │ (SQLite)   │             │
+│                  └────────────┘             │
+└──────────────┬──────────────────────────────┘
+               │  HTTP/JSON, loopback only
+               │  analyses out — never audio in
+               ▼
+┌─────────────────────────────────────────────┐
+│      ML SIDECAR (Python) @ 127.0.0.1:8801   │
+│  Uvicorn ASGI — internal, not public         │
 │                                             │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
 │  │Ingestion │→ │ Preproc  │→ │ Features │  │
 │  └──────────┘  └──────────┘  └────┬─────┘  │
-│                                   ▼        │
-│                          ┌──────────────┐  │
-│                          │  Detection   │  │
-│                          │ (Heuristic   │  │
-│                          │  Classifier) │  │
-│                          └──────┬───────┘  │
-│                                 ▼          │
-│                        ┌──────────────┐    │
-│                        │ Risk Scoring │    │
-│                        │ (v2 Policy)  │    │
-│                        └──────┬───────┘    │
-│                               ▼            │
-│              ┌────────┐  ┌────────────┐    │
-│              │ Alerts │  │   Ledger   │    │
-│              └────────┘  │ (SQLite)   │    │
-│                          └────────────┘    │
-└─────────────────────────────────────────────┘
+│                          ┌────────┴─────┐  │
+│                          ▼              ▼  │
+│                   ┌───────────┐ ┌──────────┐│
+│                   │ Detection │ │ Speaker  ││
+│                   │(Heuristic)│ │  Verif.  ││
+│                   └───────────┘ └──────────┘│
+│                                             │
+│  Raw audio lives here and nowhere else.     │
+│  Buffers are zeroed before each response.   │
+└──────────────┬──────────────────────────────┘
                │
                ▼
 ┌─────────────────────────────────────────────┐
@@ -69,19 +89,26 @@
 └─────────────────────────────────────────────┘
 ```
 
+This split is the one specified in `docs/01-ARCHITECTURE.md` §2, which places the gateway, session
+orchestrator, risk fusion, session aggregator, decision service, alert service and audit service
+in **[Go]**, and preprocess/VAD, detection and speaker verification in **[Python]**. The spec's
+transport between them is gRPC; Phase 0 uses loopback HTTP/JSON, which is deviation DEV-4 in
+`docs/HANDOFF.md`.
+
 ---
 
 ## 2. Languages & Runtimes
 
 | # | Language | Version / Notes | Used For |
 |---|----------|-----------------|----------|
-| 1 | **Python** | >= 3.10 (type union syntax `X \| Y`) | Entire backend — API, DSP pipeline, ML heuristics, ledger |
+| 1 | **Go** | >= 1.27 | Gateway — API, schema validation, risk fusion, session aggregation, decisions, alerts, hash-chained ledger |
+| 1b | **Python** | >= 3.10 (type union syntax `X \| Y`) | ML sidecar — DSP pipeline, VAD, feature extraction, spoof detector, speaker verification |
 | 2 | **JavaScript (JSX)** | ES2022 modules | React frontend — components, state, routing |
 | 3 | **JavaScript (JS)** | ES Modules | API client (`api.js`), Vite config (`vite.config.js`) |
 | 4 | **CSS** | Vanilla / custom properties | All visual styles (`styles.css`, 20 KB) |
 | 5 | **HTML** | HTML5 | SPA shell (`index.html`) |
 | 6 | **PowerShell** | Windows PowerShell 5.1+ | Dev launcher (`start.ps1`), sample generator (`generate_speech_samples.ps1`) |
-| 7 | **SQL** | SQLite dialect | Ledger DDL / DML inside `ledger.py` |
+| 7 | **SQL** | SQLite dialect | Ledger DDL / DML inside `gateway/internal/ledger` |
 | 8 | **JSON** | — | `package.json`, `package-lock.json`, API request/response bodies, ledger payloads |
 | 9 | **Markdown** | GitHub Flavored | `README.md`, `ARCHITECTURE.md`, `docs/verification.md`, `models/README.md` |
 
@@ -89,20 +116,30 @@
 
 ## 3. Technology Stack
 
-### Backend
+### Gateway (Go)
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| Web framework | **FastAPI** `>=0.115` | REST endpoints, WebSocket, lifespan hooks |
-| ASGI server | **Uvicorn** `[standard]` `>=0.30` | Production-grade async HTTP/WS server |
-| Data validation | **Pydantic v2** (bundled with FastAPI) | Request/response schemas, strict models |
+| Web framework | **net/http** (stdlib, Go 1.22+ pattern routing) | REST endpoints, no router dependency |
+| WebSocket | **github.com/coder/websocket** `v1.8` | Live per-window stream to the dashboard |
+| Persistence | **modernc.org/sqlite** `v1.58` | Pure-Go SQLite; no cgo, so the gateway cross-compiles and needs no C toolchain |
+| Identifiers | **github.com/google/uuid** `v1.6` | Call and appeal identifiers |
+| Data validation | stdlib `encoding/json` with `DisallowUnknownFields` | Reproduces Pydantic's `extra="forbid"` |
+| Testing | stdlib `testing` | Golden replay, invariant tests, `httptest` API tests |
+
+### ML sidecar (Python)
+
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| Web framework | **FastAPI** `>=0.115` | Internal loopback endpoints |
+| ASGI server | **Uvicorn** `[standard]` `>=0.30` | Async HTTP server |
+| Data validation | **Pydantic v2** (bundled with FastAPI) | Internal request models, strict |
 | Numerical computing | **NumPy** `>=1.26` | Array ops, FFT, RMS, MFCC, resampling |
 | Audio I/O | **SoundFile** `>=0.12` | WAV file reading (libsndfile binding) |
 | Audio features | **Librosa** `>=0.10.2` | Mel-spectrogram, MFCC, pitch (YIN), spectral flatness, RMS |
 | Signal processing | **SciPy** `>=1.12` | Butterworth bandpass filter (`butter/sosfilt`), `resample_poly`, `find_peaks` |
 | HTTP testing | **HTTPX** `>=0.27` | Async test client for pytest |
 | Testing | **Pytest** `>=8` | Unit & integration tests |
-| Persistence | **SQLite** (stdlib `sqlite3`) | Tamper-evident ledger |
 | Hashing | **SHA-256** (stdlib `hashlib`) | Ledger chain integrity |
 | Concurrency | **asyncio** + `asyncio.to_thread` | Non-blocking audio processing |
 
@@ -127,26 +164,43 @@
 ```
 voiceshield-ai/
 │
-├── backend/                        ← Python package (ASGI app)
+├── gateway/                        ← Go module: everything downstream of the detector
+│   ├── go.mod
+│   ├── cmd/voxguard/main.go        [Go]  Entrypoint, flags, graceful shutdown
+│   └── internal/
+│       ├── numeric/                [Go]  CPython-identical rounding (round-half-to-even)
+│       ├── policy/                 [Go]  Versioned scoring policy pack
+│       ├── scoring/                [Go]  Risk fusion (03) + session aggregator (04)
+│       │   └── testdata/golden_windows.json   Vectors emitted from the Python reference
+│       ├── decision/               [Go]  Decision service, WAL seq, supervisor overrides
+│       ├── alerts/                 [Go]  Idempotent alerts, SLA, resolutions, appeals
+│       ├── ledger/                 [Go + SQL]  Hash-chained, origin-signed audit store
+│       ├── schema/                 [Go]  Request validation, attestation provenance rule
+│       ├── sidecar/                [Go]  Client + reverse proxy for the Python service
+│       ├── session/                [Go]  Session orchestrator, call state, event log
+│       └── httpapi/                [Go]  Routes, CORS, WebSocket, error shape
+│
+├── backend/                        ← Python ML sidecar
 │   ├── app/
 │   │   ├── __init__.py             [Python]  Package marker
-│   │   ├── main.py                 [Python]  FastAPI app, all endpoints, call orchestration
+│   │   ├── sidecar.py              [Python]  Internal FastAPI service; owns the audio boundary
 │   │   ├── ingestion.py            [Python]  WAV reader, chunking, resampling
 │   │   ├── preprocessing.py        [Python]  VAD (energy + periodicity), bandpass filter
 │   │   ├── features.py             [Python]  MFCCs, mel-spec, pitch, jitter, shimmer, flatness
 │   │   ├── detection.py            [Python]  Abstract SpoofClassifier, HeuristicClassifier
-│   │   ├── risk_scoring.py         [Python]  fuse() score fusion, RollingRisk (EMA)
-│   │   ├── alerts.py               [Python]  Alert creation (stub Twilio integration)
-│   │   ├── ledger.py               [Python + SQL]  SHA-256 chain ledger, SQLite persistence
-│   │   ├── schemas.py              [Python]  Pydantic v2 request/response models
-│   │   └── cli.py                  [Python]  CLI entry point
+│   │   ├── speaker_verification.py [Python]  Enrolment, embeddings, consent gate
+│   │   └── cli.py                  [Python]  Per-window NDJSON debugging tool
 │   │
 │   ├── tests/
-│   │   └── test_pipeline.py        [Python]  Pytest test suite
+│   │   └── test_pipeline.py        [Python]  DSP, detector, consent, audio-boundary tests
+│   │
+│   ├── tools/
+│   │   └── emit_golden.py          [Python]  Emits the Go golden vectors from the reference
 │   │
 │   ├── data/                       ← Runtime data
-│   │   └── ledger.db               [SQLite]  Auto-created at runtime
+│   │   └── ledger.db               [SQLite]  Auto-created at runtime, written by the gateway
 │   │
+│   ├── conftest.py                 [Python]  Puts backend/ on sys.path for pytest
 │   ├── generate_fixtures.py        [Python]     Creates synthetic WAV fixtures for demo
 │   ├── generate_speech_samples.ps1 [PowerShell] Windows TTS → WAV sample generator
 │   ├── requirements.txt            [Text]    Direct Python dependencies
@@ -173,7 +227,7 @@ voiceshield-ai/
 ├── docs/
 │   └── verification.md             [Markdown] Ledger verification guide
 │
-├── start.ps1                       [PowerShell] One-command dev launcher (backend + frontend)
+├── start.ps1                       [PowerShell] One-command dev launcher (sidecar + gateway + frontend)
 ├── .gitignore
 └── README.md                       [Markdown]
 ```
@@ -185,16 +239,29 @@ voiceshield-ai/
 ### 5.1 Module Map
 
 ```
-main.py
-  ├── ingestion.py     (AUDIO_DIR, chunks(), resolve_audio())
-  ├── preprocessing.py (preprocess(), SAMPLE_RATE=16000)
-  ├── features.py      (extract())
-  ├── detection.py     (classifier = HeuristicClassifier())
-  ├── risk_scoring.py  (score_window(), SessionRisk)
-  ├── alerts.py        (make_alert())
-  ├── ledger.py        (Ledger)
-  └── schemas.py       (Start, AudioChunk, Scores, AlertRequest, LedgerEvent)
+gateway/cmd/voxguard
+  └── internal/httpapi     (Routes, CORS, WebSocket, FastAPI-shaped error bodies)
+        ├── internal/schema    (Start, Scores, AlertRequest, LedgerEvent, Context provenance)
+        ├── internal/session   (Manager, Call, event log, streaming loop)
+        │     ├── internal/sidecar   (OpenStream / NextWindow / CloseStream / Proxy)
+        │     ├── internal/scoring   (ScoreWindow(), SessionRisk, ContextTerm())
+        │     │     ├── internal/policy    (Pack, Default)
+        │     │     └── internal/numeric   (Round())
+        │     ├── internal/decision  (Service.Decide(), Service.Override())
+        │     ├── internal/alerts    (Store.Ensure(), Resolve(), LodgeAppeal())
+        │     └── internal/ledger    (Open(), Append(), Verify())
+        └── ...
+
+backend/app/sidecar.py     (analyse_buffer(), window_results(), internal endpoints)
+  ├── ingestion.py            (AUDIO_DIR, chunks(), resolve_audio())
+  ├── preprocessing.py        (preprocess(), SAMPLE_RATE=16000)
+  ├── features.py             (extract())
+  ├── detection.py            (classifier = HeuristicClassifier())
+  └── speaker_verification.py (verifier.enroll(), verify(), revoke())
 ```
+
+The arrow between them runs one way and carries no audio: `internal/sidecar` asks for the next
+window's *analysis*, and `sidecar.py` zeroes the buffer before the response is built.
 
 ### 5.2 Audio Processing Pipeline
 
@@ -231,14 +298,16 @@ WAV File (demo_audio/)
       │  • synthetic_score = 0.55×spectral + 0.45×prosody
       │  • classification  → "SYNTHETIC" if >= 0.5 else "REAL"
       │
-      ▼ risk_scoring.score_window()  [Python]
+      ═══ process boundary: the analysis crosses, the audio does not ═══
+
+      ▼ scoring.ScoreWindow()  [Go]
       │  • AI .60, speaker .20, context .20; active weights renormalize
       │  • AI probability shrinks toward .5 according to confidence
       │  • Context recursively renormalizes over available, sourced fields
       │  • Adversarial/replay/degraded policy floors are applied last
       │  • LOW 0–39 · MEDIUM 40–69 · HIGH 70–100 · UNKNOWN has no score
       │
-      ▼ risk_scoring.SessionRisk.update()
+      ▼ scoring.SessionRisk.Update()  [Go]
          • EWMA α=.35 plus decaying peak: max(EWMA, peak−8), peak decay=.98
          • 2-of-3 escalation and 5-of-6 de-escalation with a 5-point margin
          • One deterministic alert per MEDIUM/HIGH band escalation
@@ -330,18 +399,25 @@ export function socket(callId) → WebSocket
 User clicks "Run simulation"
         │
         ▼  POST /api/v1/stream/start
-   FastAPI backend
-        │  asyncio.create_task(run_call(...))
-        ▼
-   Loop over 3-second WAV chunks ──►  analyze()
-        │                                 │
-        │                      preprocess → extract → classify → fuse → EMA
-        │                                 │
-        │  ledger.append("observation")  ◄┘
+   Go gateway (internal/httpapi)
+        │  schema validate → session.Manager.Start()
+        ▼  POST /internal/stream/open
+   Python sidecar opens a windowed read over the WAV
         │
-        ├──► sustained_high_risk? → make_alert() → ledger.append("alert")
+        ▼  go m.run(...)   — one goroutine per call
+   Loop, one tick per hop ──► POST /internal/stream/{id}/next
+        │                            │
+        │        [Python]  preprocess → extract → detect ‖ verify → zero the buffer
+        │                            │
+        │        ◄───────────────────┘  analysis only: features and scores, never samples
         │
-        ▼  push event to call["events"] list
+        │  [Go]  scoring.ScoreWindow() → SessionRisk.Update() → decisions.Decide()
+        │
+        │  ledger.Append("observation")
+        │
+        ├──► verdict.AlertKey != nil? → alerts.Ensure() → ledger.Append("alert")
+        │
+        ▼  call.emit(Event{...})
    WebSocket /ws/audio/{call_id}
         │
         ▼  JSON event stream
@@ -390,7 +466,7 @@ The band escalates after two of the last three windows qualify. It recovers afte
 
 | Script | Language | Purpose |
 |--------|----------|---------|
-| `start.ps1` | PowerShell | One-command launcher: checks ports, generates fixtures, starts Uvicorn + Vite in hidden windows |
+| `start.ps1` | PowerShell | One-command launcher: checks ports 8000/8801/5173, generates fixtures, builds the gateway, starts sidecar + gateway + Vite in hidden windows |
 | `backend/generate_fixtures.py` | Python | Generates synthetic sine-wave WAV fixtures (`fixture-*.wav`) for offline demo |
 | `backend/generate_speech_samples.ps1` | PowerShell | Uses an installed Windows `System.Speech` voice to generate clearly labelled synthetic TTS scenario WAVs |
 
@@ -398,11 +474,21 @@ The band escalates after two of the last three windows qualify. It recovers afte
 
 ## 10. Dependency Summary
 
+### Go (`gateway/go.mod`)
+
+| Module | Version | Role |
+|--------|---------|------|
+| `github.com/coder/websocket` | `v1.8.15` | WebSocket server for the live dashboard stream |
+| `modernc.org/sqlite` | `v1.58.0` | Pure-Go SQLite driver for the audit ledger — no cgo, so no C toolchain is needed to build |
+| `github.com/google/uuid` | `v1.6.0` | Call and appeal identifiers |
+
+Everything else — routing, JSON, HMAC, SHA-256, the reverse proxy — is the standard library.
+
 ### Python (`backend/requirements.txt`)
 
 | Package | Version Constraint | Role |
 |---------|-------------------|------|
-| `fastapi` | `>=0.115, <1` | ASGI web framework |
+| `fastapi` | `>=0.115, <1` | ASGI framework for the internal sidecar |
 | `uvicorn[standard]` | `>=0.30, <1` | ASGI server |
 | `numpy` | `>=1.26, <3` | Numerical arrays, FFT |
 | `scipy` | `>=1.12, <2` | DSP filters, resampling, peak finding |
