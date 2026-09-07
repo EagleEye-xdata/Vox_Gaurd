@@ -27,7 +27,8 @@ import numpy as np
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from .detection import classifier
+from .aasist import AASISTLClassifier
+from .detection import HEURISTIC_FALLBACK, classifier
 from .audiosocket import AudioSocketIngest
 from .features import extract
 from .ingestion import AUDIO_DIR, chunks, resolve_audio
@@ -114,7 +115,17 @@ def analyse_buffer(audio: np.ndarray, identity_id: str | None = None) -> dict:
             }
         processed, speech_ratio = prepared
         features = extract(processed)
-        scores = classifier.score_features(features)
+        try:
+            # AASIST-L (when active) scores the raw, unfiltered `audio` window; the heuristic
+            # scores the hand-crafted `features` built from the filtered/gated `processed` signal.
+            # `analyze()` picks the right input per detector -- see SpoofClassifier.analyze.
+            scores = classifier.analyze(audio, features)
+        except Exception as error:
+            # A detector that throws mid-call must degrade this one window, not the request
+            # (CLAUDE.md invariant 2: never a silently-passing score, but also never a crash).
+            log.error("Detector %s failed on this window, falling back to %s: %s",
+                      classifier.name, HEURISTIC_FALLBACK.name, error)
+            scores = HEURISTIC_FALLBACK.score_features(features)
 
         # Confidence is an honest statement of how much voiced evidence this window carried, not
         # a model output. It shrinks the detector's contribution in the Go fusion, so a window
@@ -161,6 +172,7 @@ def window_results(path: Path, identity_id: str | None, window_seconds: float, h
 @app.get("/internal/health")
 def health():
     live_ingest = getattr(app.state, "live_ingest", None)
+    is_aasist = isinstance(classifier, AASISTLClassifier)
     return {
         "status": "ok",
         "model": classifier.name,
@@ -169,6 +181,10 @@ def health():
         "verifier_version": VERIFIER_VERSION,
         "sample_rate": SAMPLE_RATE,
         "raw_audio_persistence": False,
+        # Additive fields: makes it possible to tell "AASIST-L loaded" apart from "running on the
+        # heuristic fallback" without parsing model_version strings.
+        "detector_mode": "aasist-l" if is_aasist else "heuristic-fallback",
+        "detector_provider": classifier.provider if is_aasist else None,
         "audiosocket_state": live_ingest.state if live_ingest else "unavailable",
         "audiosocket_port": live_ingest.bound_port if live_ingest else None,
     }

@@ -40,6 +40,11 @@ type Health struct {
 	VerifierVersion     string `json:"verifier_version"`
 	SampleRate          int    `json:"sample_rate"`
 	RawAudioPersistence bool   `json:"raw_audio_persistence"`
+	// DetectorMode and DetectorProvider are additive: they let a caller tell "AASIST-L loaded"
+	// apart from "running on the heuristic fallback" without parsing ModelVersion strings. Both
+	// are optional so an older sidecar response (without these fields) still decodes cleanly.
+	DetectorMode     string `json:"detector_mode,omitempty"`
+	DetectorProvider string `json:"detector_provider,omitempty"`
 }
 
 // AudioFile is one fixture available to stream. Names only; never contents.

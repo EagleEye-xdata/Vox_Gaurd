@@ -1,13 +1,10 @@
-from abc import ABC, abstractmethod
+import logging
+import os
 import numpy as np
 from .features import extract
+from .spoof_classifier import SpoofClassifier
 
-class SpoofClassifier(ABC):
-    name = "abstract"
-
-    @abstractmethod
-    def predict(self, chunk: np.ndarray) -> float:
-        """Return uncalibrated synthetic-likelihood indicator in [0, 1]."""
+log = logging.getLogger("voiceshield.sidecar")
 
 class HeuristicClassifier(SpoofClassifier):
     name = "acoustic-heuristic-v1 (unvalidated)"
@@ -37,4 +34,35 @@ class HeuristicClassifier(SpoofClassifier):
     def predict(self, chunk):
         return self.score_features(extract(chunk))["synthetic_score"]
 
-classifier = HeuristicClassifier()
+# Always-available fallback instance. This is what `sidecar.analyse_buffer` scores with when the
+# primary detector is disabled, fails to load, or throws on a given window (CLAUDE.md invariant 2:
+# a degraded detector must never look like a silently-passing one).
+HEURISTIC_FALLBACK = HeuristicClassifier()
+
+
+def _select_active_classifier() -> SpoofClassifier:
+    """Pick the detector `sidecar.py` scores every window with, once, at process start.
+
+    CLAUDE.md decision D-1: a real detector runs behind this interface with the heuristic as a
+    fast fallback. `AASIST_ENABLED=false` opts back out to heuristic-only (e.g. no ONNX Runtime
+    available, or a deliberate demo of the pre-AASIST behaviour); otherwise AASIST-L is loaded
+    once here, and a load failure (missing dependency, missing/corrupt model file, no network for
+    the one-time download) degrades to the heuristic rather than raising -- the sidecar must still
+    start and serve requests.
+    """
+    if os.getenv("AASIST_ENABLED", "true").strip().lower() in ("0", "false", "no"):
+        log.info("AASIST_ENABLED is false; using %s", HEURISTIC_FALLBACK.name)
+        return HEURISTIC_FALLBACK
+    from .aasist import AASISTLClassifier  # local import: keeps onnxruntime optional at import time
+    aasist = AASISTLClassifier()
+    if aasist.load():
+        log.info("Active detector: %s (provider=%s)", aasist.name, aasist.provider)
+        return aasist
+    log.warning("AASIST-L unavailable (%s); using %s", aasist.load_error, HEURISTIC_FALLBACK.name)
+    return HEURISTIC_FALLBACK
+
+
+# The module-level singleton every other module imports. Computed once at process start so a
+# session never pays ONNX Runtime session-creation cost per request (CLAUDE.md D-1, and the
+# integration's own "load once per process" requirement).
+classifier = _select_active_classifier()

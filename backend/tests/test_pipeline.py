@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from app import sidecar
 from app.audiosocket import AudioSocketIngest, FRAME_AUDIO_8K, FRAME_HANGUP, FRAME_UUID
-from app.detection import classifier
+from app.detection import HeuristicClassifier, classifier
 from app.features import extract
 from app.preprocessing import preprocess
 from app.speaker_verification import verifier
@@ -64,10 +64,18 @@ def test_pitch_outliers_do_not_dominate_prosody():
 # --------------------------------------------------------------------------------------------
 
 def test_detector_output_range_is_attainable():
-    """DEF-1 / DR-003: an unreachable upper range makes a HIGH alert impossible one layer down."""
-    synthetic = classifier.score_features(
+    """DEF-1 / DR-003: an unreachable upper range makes a HIGH alert impossible one layer down.
+
+    This locks in HeuristicClassifier's own numeric behaviour, so it targets that class directly
+    rather than the process-wide `classifier` singleton -- since AASIST-L (backend/app/aasist.py),
+    `classifier` may now be a different detector with an entirely different score_features/analyze
+    implementation, and this regression test is specifically about the heuristic's log-axis
+    flatness remap, not about whichever detector happens to be active.
+    """
+    heuristic = HeuristicClassifier()
+    synthetic = heuristic.score_features(
         {'spectral_flatness': 1e-7, 'pitch_cv': 0., 'jitter': 0., 'shimmer': 0.})
-    genuine = classifier.score_features(
+    genuine = heuristic.score_features(
         {'spectral_flatness': 0.5, 'pitch_cv': .6, 'jitter': .3, 'shimmer': .5})
     assert synthetic['synthetic_score'] >= 0.9, 'upper range unreachable'
     assert genuine['synthetic_score'] <= 0.1, 'lower range unreachable'

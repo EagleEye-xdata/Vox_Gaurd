@@ -15,3 +15,7 @@ gateway/voxguard.exe~
 .hallmark/
 .env
 
+# Downloaded model binaries (backend/tools/download_aasist_model.py fetches these on first run;
+# see backend/models/README.md). Never commit the weights themselves.
+backend/models/*.onnx
+

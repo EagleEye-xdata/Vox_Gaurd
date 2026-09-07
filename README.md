@@ -87,7 +87,7 @@ Optional: run `./backend/generate_speech_samples.ps1` from any directory to crea
 | Ingestion | SoundFile reads overlapping 3-second windows with a 1-second hop; SciPy resamples to mono 16 kHz |
 | Preprocessing | 80–3800 Hz band-pass, frame energy + in-band spectral flatness VAD, gentle noise gate |
 | Features | librosa MFCCs, log-mel summary, YIN pitch contour, frame-based jitter/shimmer proxies, spectral peaks, RMS envelope |
-| Detection | `SpoofClassifier.predict(chunk) -> float`; unvalidated `HeuristicClassifier` fallback |
+| Detection | `SpoofClassifier.analyze(audio, features) -> dict`. Primary: **AASIST-L** (ONNX Runtime, CPU), the official [SpeechAntiSpoofingBenchmarks/AASIST-L](https://huggingface.co/SpeechAntiSpoofingBenchmarks/AASIST-L) checkpoint, scored on the raw 16 kHz mono window. Falls back to the unvalidated `HeuristicClassifier` if the model is disabled, fails to load, or throws on a given window. |
 | Fusion | Versioned active-signal weights (AI .60, speaker .20, context .20), renormalization, confidence shrinkage, and policy floors |
 | Temporal risk | EWMA α=.35 plus decaying peak memory; 2-of-3 escalation and 5-of-6 recovery hysteresis |
 | Response | One alert per band escalation, deterministic keys, callback/MFA recommendation, never auto-block |
@@ -100,6 +100,44 @@ applies the 40-point floor rather than scoring out-of-scope audio. `simulate_adv
 **simulated, not detected**; real adversarial input-sanity checking is Phase 2.
 
 Risk is **0–100, higher means more verification is required**. LOW is 0–39, MEDIUM is 40–69, HIGH is 70–100, and UNKNOWN has no numeric score and appears as **Not assessed**. The REAL/SYNTHETIC window label is an uncalibrated heuristic indication only. Speaker match is `null` / not enrolled, never a fabricated measurement. Spectral peaks are explicitly not validated LPC formants; jitter/shimmer are frame proxies, not clinical measurements.
+
+## Spoof detector: AASIST-L
+
+The primary detector is the official [AASIST-L](https://huggingface.co/SpeechAntiSpoofingBenchmarks/AASIST-L)
+checkpoint (MIT licence, ~85k parameters), run locally via ONNX Runtime on CPU — no audio and no
+model weights leave the machine, and nothing is sent to Hugging Face except the one-time model
+download.
+
+- **Input**: the raw, unfiltered 16 kHz mono window (before `preprocessing.preprocess()`'s
+  band-pass filter and noise gate touch it) — AASIST-L is a raw-waveform model and was not
+  evaluated on hand-filtered audio. Windows are deterministically cropped to the first 64,600
+  samples if longer, or tile-repeated if shorter, matching the upstream `clovaai/aasist`
+  evaluation behaviour exactly (`backend/app/aasist.py:pad_fixed`).
+- **Output**: the model's own two-class logit (spoof vs. bona fide). `backend/app/aasist.py` turns
+  the logit difference into a `[0, 1]` score via a sigmoid — a deterministic squash, **not** a
+  fitted or validated calibration (see Limitations below and `docs/05-ML_MODEL_LIFECYCLE.md`
+  section 3). `calibrator_version` is stamped `identity-sigmoid@0.0.0-unvalidated`, the same
+  honesty convention the heuristic already used for its own unvalidated identity calibrator.
+- **Model acquisition**: downloaded once, automatically, on first sidecar start (plain HTTPS GET,
+  no `huggingface_hub` dependency, SHA-256 verified) to `backend/models/aasist-l.onnx` — never
+  committed (see `.gitignore`, `backend/models/README.md`). Run
+  `python backend/tools/download_aasist_model.py` to fetch it ahead of time.
+- **Fallback**: if `AASIST_ENABLED=false`, the model file can't be obtained, or it fails to load,
+  the sidecar runs the heuristic detector instead and says so honestly — `GET /internal/health`
+  (and the gateway's `GET /api/v1/health`) reports `detector_mode: "aasist-l"` or
+  `"heuristic-fallback"`, and every scored window's `model`/`model_version` fields reflect whichever
+  one actually ran. A detector that throws mid-call degrades that one window to the heuristic
+  rather than failing the request.
+- **Configuration** (`.env.example`): `AASIST_ENABLED`, `AASIST_MODEL_PATH`,
+  `AASIST_AUTO_DOWNLOAD`, `AASIST_THRESHOLD` (provisional decision boundary for the
+  `classification` label only — does not affect the numeric score the Go fusion consumes),
+  `AASIST_USE_CUDA`.
+- **Limitations**: per the model card, AASIST-L reaches 0.99% EER on its own ASVspoof2019 LA
+  benchmark but 44.45% EER on the out-of-domain InTheWild set — close to coin-flip outside its
+  training distribution. It has not been evaluated on Indian languages, telephony-codec audio, or
+  the synthetic sine-wave fixtures this demo ships with. Treat its score as one signal in
+  VoxGuard's multi-signal risk fusion, never as a standalone verdict — no call is ever auto-blocked
+  from this signal alone, matching the existing decision policy.
 
 ## API contract
 
@@ -147,8 +185,8 @@ From `frontend`: `npm run build`.
 
 ## Limitations and next steps
 
-- **No validated spoof detector or accuracy claims.** Pitch-regular genuine voices can be flagged and sophisticated clones can evade the heuristic. Codec noise and accents need evaluation. Energy/flatness VAD can accept tonal non-speech and reject unvoiced speech.
-- Replace the classifier with an evaluated AASIST/RawNet2/wav2vec checkpoint, and train/evaluate with separate speaker/generator splits. Benchmark precision, recall, F1, false positives/negatives, and end-to-end latency on ASVspoof plus unseen sources.
+- **No accuracy claims for this deployment.** AASIST-L is a real, published, benchmarked model — but benchmarked on ASVspoof2019 LA, not on VoxGuard's languages, telephony codecs, or fixtures. Its own model card reports 44.45% EER (near coin-flip) on the out-of-domain InTheWild set. Pitch-regular genuine voices can still be flagged and sophisticated clones can still evade either detector. Energy/flatness VAD can accept tonal non-speech and reject unvoiced speech.
+- Fine-tune or re-evaluate AASIST-L (or replace it) with separate speaker/generator splits on this project's actual target languages and channels. Benchmark precision, recall, F1, false positives/negatives, and end-to-end latency on ASVspoof plus unseen sources — and fit a real calibrator (`docs/05-ML_MODEL_LIFECYCLE.md` section 3) before treating the score as a probability.
 - Add proper prosody modeling, validated formant tracks, speaker enrollment/ECAPA matching, and calibrated fusion before deployment. The Python sidecar uses librosa/NumPy/SciPy without PyTorch/torchaudio, avoiding unused heavyweight inference dependencies until a real checkpoint is supplied.
 - **The scripted attacker has never been run against the real ElevenLabs API.** That path is covered by tests against a fake HTTP client only. How this detector scores hosted TTS over an 8 kHz channel is unmeasured; do not quote a number for it.
 - Real telecom/VoIP integration, a permissioned blockchain network, bank webhooks, cross-institution sharing, and multilingual coverage remain stretch goals, matching the plan and deck.

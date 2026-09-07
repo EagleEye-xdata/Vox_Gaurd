@@ -2,6 +2,18 @@
 
 > Fixes DR-015, DR-018, DR-023, DR-024, DR-028, DR-029.
 
+> **2026-09-08 — interim detector deployed (DEV-9 in `docs/HANDOFF.md`).** The primary detector
+> behind `SpoofClassifier` is now the official, published **AASIST-L** checkpoint (ONNX, CPU;
+> https://huggingface.co/SpeechAntiSpoofingBenchmarks/AASIST-L), not the Qwen2-Audio fine-tune
+> D-1 originally named. It is *unmodified* — no training, no fine-tuning, no calibration fit on
+> this project's data. Its own model card reports 0.99% EER on ASVspoof2019 LA (its training
+> distribution) and 44.45% EER on InTheWild (out-of-domain, near coin-flip); it has not been
+> evaluated at all on this project's target languages, telephony codecs, or demo fixtures. Section
+> 3's calibration requirement is **not yet satisfied** for this detector — see
+> `backend/app/aasist.py`'s module docstring for exactly what its score is and is not. Sections
+> 1–2 and 4–10 below still describe the target end state (a properly trained, split-evaluated,
+> calibrated, bias-audited detector) that this interim deployment does not yet meet.
+
 ## 1. Data sourcing
 
 **Genuine speech** — openly licensed corpora plus enrolment samples given under explicit consent.

@@ -187,7 +187,9 @@ voiceshield-ai/
 │   │   ├── ingestion.py            [Python]  WAV reader, chunking, resampling
 │   │   ├── preprocessing.py        [Python]  VAD (energy + periodicity), bandpass filter
 │   │   ├── features.py             [Python]  MFCCs, mel-spec, pitch, jitter, shimmer, flatness
-│   │   ├── detection.py            [Python]  Abstract SpoofClassifier, HeuristicClassifier
+│   │   ├── spoof_classifier.py     [Python]  Abstract SpoofClassifier interface
+│   │   ├── detection.py            [Python]  HeuristicClassifier, active-detector selection
+│   │   ├── aasist.py               [Python]  AASISTLClassifier — ONNX Runtime AASIST-L detector
 │   │   ├── speaker_verification.py [Python]  Enrolment, embeddings, consent gate
 │   │   └── cli.py                  [Python]  Per-window NDJSON debugging tool
 │   │
@@ -256,7 +258,8 @@ backend/app/sidecar.py     (analyse_buffer(), window_results(), internal endpoin
   ├── ingestion.py            (AUDIO_DIR, chunks(), resolve_audio())
   ├── preprocessing.py        (preprocess(), SAMPLE_RATE=16000)
   ├── features.py             (extract())
-  ├── detection.py            (classifier = HeuristicClassifier())
+  ├── detection.py            (classifier = active detector, AASIST-L or heuristic fallback)
+  ├── aasist.py               (AASISTLClassifier, ONNX Runtime)
   └── speaker_verification.py (verifier.enroll(), verify(), revoke())
 ```
 
@@ -291,12 +294,17 @@ WAV File (demo_audio/)
       │  • Spectral flatness (Wiener entropy)
       │  • Top-3 spectral peaks (200–3500 Hz)
       │
-      ▼ detection.HeuristicClassifier.score_features()   [Python]
-      │  • tonality       = log-axis map of Wiener entropy over [3e-2, 1e-6]
-      │  • spectral_score  = clip(0.05 + 0.90×tonality, 0.05, 0.95)
-      │  • prosody_score   = clip(0.95 − 2.4×pitch_cv − 2×jitter − 0.35×shimmer, 0.05, 0.95)
-      │  • synthetic_score = 0.55×spectral + 0.45×prosody
-      │  • classification  → "SYNTHETIC" if >= 0.5 else "REAL"
+      ▼ detection.classifier.analyze(audio, features)   [Python]
+      │  Primary: aasist.AASISTLClassifier — ONNX Runtime, CPU, the raw (pre-filter) 16 kHz
+      │  mono window padded/cropped to 64,600 samples. synthetic_score = sigmoid(spoof_logit −
+      │  bonafide_logit); uncalibrated (calibrator_version = identity-sigmoid@0.0.0-unvalidated).
+      │  Fallback (disabled / load or inference failure): HeuristicClassifier.score_features()
+      │  on the filtered/gated `features` —
+      │    tonality       = log-axis map of Wiener entropy over [3e-2, 1e-6]
+      │    spectral_score  = clip(0.05 + 0.90×tonality, 0.05, 0.95)
+      │    prosody_score   = clip(0.95 − 2.4×pitch_cv − 2×jitter − 0.35×shimmer, 0.05, 0.95)
+      │    synthetic_score = 0.55×spectral + 0.45×prosody
+      │  classification → "SYNTHETIC" if synthetic_score >= threshold else "REAL"
       │
       ═══ process boundary: the analysis crosses, the audio does not ═══
 
@@ -434,7 +442,10 @@ User clicks "Run simulation"
 
 ## 8. Risk Scoring Model
 
-> **Disclaimer**: The current classifier is an acoustic heuristic, not a validated ML model.
+> **Disclaimer**: The primary detector (AASIST-L) is a real published model, but it is not
+> validated for this project's languages, telephony codecs, or demo fixtures — see the README's
+> "Spoof detector: AASIST-L" section and `docs/05-ML_MODEL_LIFECYCLE.md`. Its heuristic fallback
+> is not a validated ML model at all.
 
 ### Window Score
 
@@ -494,6 +505,7 @@ Everything else — routing, JSON, HMAC, SHA-256, the reverse proxy — is the s
 | `scipy` | `>=1.12, <2` | DSP filters, resampling, peak finding |
 | `librosa` | `>=0.10.2, <1` | Audio feature extraction |
 | `soundfile` | `>=0.12, <1` | WAV I/O |
+| `onnxruntime` | `>=1.18, <2` | CPU inference for the AASIST-L spoof detector (`app/aasist.py`) |
 | `httpx` | `>=0.27, <1` | Async HTTP test client |
 | `pytest` | `>=8, <10` | Test framework |
 

@@ -204,6 +204,12 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		out["model_versions"] = map[string]string{
 			"detector": h.ModelVersion, "calibrator": h.CalibratorVersion, "verifier": h.VerifierVersion,
 		}
+		if h.DetectorMode != "" {
+			out["detector_mode"] = h.DetectorMode
+		}
+		if h.DetectorProvider != "" {
+			out["detector_provider"] = h.DetectorProvider
+		}
 	} else {
 		// CLAUDE.md invariant 2 at the health level: a missing analysis service is reported as
 		// degraded, never as a healthy system with a quietly absent detector.
