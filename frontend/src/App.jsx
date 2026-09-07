@@ -2,14 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import {
   Shield,
   LayoutDashboard,
-  Workflow,
   BookOpen,
   Radio,
-  Play,
   ChevronRight,
   CircleHelp,
   LockKeyhole,
-  X,
   ExternalLink,
   UserCheck,
   Gavel,
@@ -206,9 +203,8 @@ export default function App() {
         <nav>
           {[
             [LayoutDashboard, "monitor", "Call monitor"],
-            [Workflow, "pipeline", "Detection pipeline"],
-            [BookOpen, "ledger", "Audit trail"],
             [PhoneCall, "telephony", "Live Phone"],
+            [BookOpen, "ledger", "Audit trail"],
           ].map(([Icon, key, title]) => (
             <button
               key={key}
@@ -270,13 +266,11 @@ export default function App() {
             <strong>
               {page === "monitor"
                 ? "Call monitor"
-                : page === "pipeline"
-                  ? "Detection pipeline"
-                  : page === "ledger"
-                    ? "Audit trail"
-                    : page === "telephony"
-                      ? "Live Phone"
-                      : "Demo guide"}
+                : page === "ledger"
+                  ? "Audit trail"
+                  : page === "telephony"
+                    ? "Live Phone"
+                    : "Demo guide"}
             </strong>
           </div>
           <span className="environment">
@@ -289,9 +283,8 @@ export default function App() {
           <nav className="mobile-nav" aria-label="Mobile navigation">
             {[
               ["monitor", "Monitor"],
-              ["pipeline", "Pipeline"],
-              ["ledger", "Ledger"],
               ["telephony", "Live Phone"],
+              ["ledger", "Ledger"],
               ["guide", "Guide"],
             ].map(([key, title]) => (
               <button
@@ -308,35 +301,29 @@ export default function App() {
               <span className="eyebrow">
                 {page === "monitor"
                   ? "CALL MONITOR"
-                  : page === "pipeline"
-                    ? "DETECTION PIPELINE"
-                    : page === "ledger"
-                      ? "AUDIT TRAIL"
-                      : page === "telephony"
-                        ? "TELEPHONY INTERFACE"
-                        : "DOCUMENTATION"}
+                  : page === "ledger"
+                    ? "AUDIT TRAIL"
+                    : page === "telephony"
+                      ? "TELEPHONY INTERFACE"
+                      : "DOCUMENTATION"}
               </span>
               <h1>
                 {page === "monitor"
                   ? "Voice fraud analysis"
-                  : page === "pipeline"
-                    ? "Audio processing pipeline"
-                    : page === "ledger"
-                      ? "Forensic audit ledger"
-                      : page === "telephony"
-                        ? "Live SIP softphone"
-                        : "VoiceShield AI guide"}
+                  : page === "ledger"
+                    ? "Forensic audit ledger"
+                    : page === "telephony"
+                      ? "Live SIP softphone"
+                      : "VoiceShield AI guide"}
               </h1>
               <p>
                 {page === "monitor"
                   ? "Real-time acoustic analysis, speaker verification, and automated policy decision engine."
-                  : page === "pipeline"
-                    ? "Acoustic extraction and multi-factor fusion."
-                    : page === "ledger"
-                      ? "Immutable SHA-256 hash chain and origin decision signatures."
-                      : page === "telephony"
-                        ? "Connect to Asterisk PBX over SIP/WSS and monitor live phone calls in real time."
-                        : "System architecture and judge Q&A summary."}
+                  : page === "ledger"
+                    ? "Immutable SHA-256 hash chain and origin decision signatures."
+                    : page === "telephony"
+                      ? "Connect to Asterisk PBX over SIP/WSS and monitor live phone calls in real time."
+                      : "System architecture and judge Q&A summary."}
               </p>
             </div>
             {page === "monitor" && (
@@ -385,66 +372,7 @@ export default function App() {
             </>
           )}
 
-          {page === "pipeline" && (
-            <div className="pipeline-view">
-              <section className="panel">
-                <div className="panel-heading">
-                  <h2>
-                    <Radio size={17} /> Live pipeline architecture
-                  </h2>
-                </div>
-                <div className="pipeline-steps">
-                  <div className="step-card">
-                    <span className="step-number">01</span>
-                    <h3>Ingestion & Normalisation</h3>
-                    <p>
-                      16 kHz mono resampling, ring buffer (Zero Disk Storage).
-                    </p>
-                  </div>
-                  <div className="step-card">
-                    <span className="step-number">02</span>
-                    <h3>Voice Activity & Butterworth Filtering</h3>
-                    <p>
-                      80-3800 Hz bandpass, energy + in-band spectral flatness
-                      VAD.
-                    </p>
-                  </div>
-                  <div className="step-card">
-                    <span className="step-number">03</span>
-                    <h3>Acoustic Feature Extraction</h3>
-                    <p>
-                      13 MFCCs, log-mel filterbanks, YIN pitch & prosody
-                      statistics.
-                    </p>
-                  </div>
-                  <div className="step-card">
-                    <span className="step-number">04</span>
-                    <h3>Parallel AI Detection & Speaker Match</h3>
-                    <p>
-                      Spoof classification and text-independent voice embedding
-                      matching.
-                    </p>
-                  </div>
-                  <div className="step-card">
-                    <span className="step-number">05</span>
-                    <h3>Active-Signal Risk Fusion</h3>
-                    <p>
-                      Active renormalisation, contextual weighting, and strict
-                      score floors.
-                    </p>
-                  </div>
-                  <div className="step-card">
-                    <span className="step-number">06</span>
-                    <h3>Decision Engine & Tamper-Evident WAL</h3>
-                    <p>
-                      Banded actions (ALLOW/WARN/STEP_UP/BLOCK) signed at
-                      origin.
-                    </p>
-                  </div>
-                </div>
-              </section>
-            </div>
-          )}
+
 
           {page === "ledger" && (
             <LedgerPanel
