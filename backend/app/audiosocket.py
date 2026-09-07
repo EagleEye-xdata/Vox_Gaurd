@@ -26,6 +26,13 @@ HOP_SECONDS = 1
 WINDOW_BYTES = ASTERISK_SAMPLE_RATE * WINDOW_SECONDS * 2
 HOP_BYTES = ASTERISK_SAMPLE_RATE * HOP_SECONDS * 2
 MAX_PENDING_WINDOWS = 3
+# Announcements for calls that have not connected yet. Bounded so a caller that announces a
+# call and never dials cannot grow the map without limit.
+MAX_ANNOUNCED_CALLS = 32
+
+# The members of the gateway's LiveStart schema (gateway/internal/schema). Anything else is
+# dropped before the request is sent, because the gateway disallows unknown fields.
+LIVE_START_FIELDS = frozenset({"label", "language", "identity_id", "context"})
 
 FRAME_HANGUP = 0x00
 FRAME_UUID = 0x01
@@ -48,14 +55,16 @@ class GatewayLiveClient:
             response.raise_for_status()
             return response.json()
 
-    async def start(self, call_id: str) -> None:
-        await self._post(
-            f"/internal/live-sessions/{call_id}",
-            {
-                "label": "Live Asterisk call",
-                "language": os.getenv("VOXGUARD_LIVE_LANGUAGE", "en"),
-            },
-        )
+    async def start(self, call_id: str, metadata: dict[str, Any] | None = None) -> None:
+        body: dict[str, Any] = {
+            "label": "Live Asterisk call",
+            "language": os.getenv("VOXGUARD_LIVE_LANGUAGE", "en"),
+        }
+        # Only the fields the gateway's LiveStart schema declares may be forwarded: it rejects
+        # unknown members, so an unfiltered dict would fail the whole session rather than one key.
+        if metadata:
+            body.update({k: v for k, v in metadata.items() if k in LIVE_START_FIELDS})
+        await self._post(f"/internal/live-sessions/{call_id}", body)
 
     async def push(self, call_id: str, window: dict[str, Any]) -> None:
         await self._post(f"/internal/live-sessions/{call_id}/windows", window)
@@ -80,6 +89,18 @@ class AudioSocketIngest:
         self.port = port if port is not None else int(os.getenv("VOXGUARD_AUDIOSOCKET_PORT", "9019"))
         self.server: asyncio.AbstractServer | None = None
         self.error: str | None = None
+        self.announced: dict[str, dict[str, Any]] = {}
+
+    def announce(self, call_id: str, metadata: dict[str, Any]) -> None:
+        """Attach session metadata to a call that is about to connect.
+
+        The AudioSocket protocol carries a UUID and audio, nothing else, so a caller that knows
+        more about the session — the simulated attacker in `ai_caller`, or an ARI controller that
+        knows the language of the leg — leaves it here for the UUID frame to pick up.
+        """
+        while len(self.announced) >= MAX_ANNOUNCED_CALLS:
+            self.announced.pop(next(iter(self.announced)))
+        self.announced[call_id] = metadata
 
     @property
     def state(self) -> str:
@@ -174,7 +195,7 @@ class AudioSocketIngest:
                         if call_id is not None or len(payload) != 16:
                             raise ValueError("AudioSocket UUID frame must be the first 16-byte identity frame")
                         call_id = str(UUID(bytes=bytes(payload)))
-                        await self.gateway.start(call_id)
+                        await self.gateway.start(call_id, self.announced.pop(call_id, None))
                         consumer = asyncio.create_task(self._consume(call_id, queue, failed))
                         continue
                     if frame_type == FRAME_DTMF:

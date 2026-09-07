@@ -63,6 +63,21 @@ Do not expose this unauthenticated prototype beyond loopback.
 5. Verify the audit chain. Run `fixture-variable.wav` with a known number and no transaction context for a different signal pattern. Run silence to verify skipped windows produce no risk score.
 6. Add consented genuine and AI-cloned `.wav` recordings to `demo_audio/`. The source list refreshes automatically. Mono/stereo, ≤96 kHz, ≤5 minutes. Filenames never determine the detection score.
 
+### Live demo with the scripted attacker
+
+Open the **Telephony** page. The **Simulated attacker** panel places a scripted scam call —
+"main Rahul bol raha hoon, aapke bank ke fraud department se…" — into the live AudioSocket path,
+using the same frames Asterisk sends, so the whole live pipeline runs with no PBX. Watch the band
+escalate on the monitor page and the decision and ledger entries appear.
+
+Copy `.env.example` to `.env` and set `ELEVENLABS_API_KEY` to have the persona spoken by real
+text-to-speech. Without a key the call is a deterministic DSP signal labelled
+`local-synthetic@1.0.0`, and the panel says so — **it is not speech, so a score obtained from it
+says nothing about detecting real synthesised voices.** Only stock or prompt-designed voices are
+permitted: a voice cloned from a real person is refused in code, and so is one whose category
+cannot be checked (`CLAUDE.md` invariant 14). Nothing you say on the call ever leaves the
+machine — the integration is text-to-speech only, never a conversational agent.
+
 Optional: run `./backend/generate_speech_samples.ps1` from any directory to create three Windows TTS scenario recordings. Every generated filename begins with `tts-`; all are synthetic test material and must not be presented as genuine or cloned-human ground truth.
 
 ## Architecture and implementation
@@ -135,5 +150,6 @@ From `frontend`: `npm run build`.
 - **No validated spoof detector or accuracy claims.** Pitch-regular genuine voices can be flagged and sophisticated clones can evade the heuristic. Codec noise and accents need evaluation. Energy/flatness VAD can accept tonal non-speech and reject unvoiced speech.
 - Replace the classifier with an evaluated AASIST/RawNet2/wav2vec checkpoint, and train/evaluate with separate speaker/generator splits. Benchmark precision, recall, F1, false positives/negatives, and end-to-end latency on ASVspoof plus unseen sources.
 - Add proper prosody modeling, validated formant tracks, speaker enrollment/ECAPA matching, and calibrated fusion before deployment. The Python sidecar uses librosa/NumPy/SciPy without PyTorch/torchaudio, avoiding unused heavyweight inference dependencies until a real checkpoint is supplied.
+- **The scripted attacker has never been run against the real ElevenLabs API.** That path is covered by tests against a fake HTTP client only. How this detector scores hosted TTS over an 8 kHz channel is unmeasured; do not quote a number for it.
 - Real telecom/VoIP integration, a permissioned blockchain network, bank webhooks, cross-institution sharing, and multilingual coverage remain stretch goals, matching the plan and deck.
 - For production: authentication, authorization, request-size/rate limits, durable session storage, retention controls, backpressure, external ledger anchoring, and deployment hardening. This is a single-machine hackathon prototype.

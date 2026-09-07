@@ -19,6 +19,7 @@
 | `fixture-steady.wav`, `fixture-variable.wav`, `fixture-silence.wav` | Deterministic DSP sine/harmonic signals from `backend/generate_fixtures.py` | Not speech. No person involved. |
 | `tts-*.wav` | Windows `System.Speech` synthetic scenario audio | Machine voice. No person cloned. |
 | Public corpora (ASVspoof 2019 LA, In-The-Wild, MLAAD, IndicVoices, Common Voice) | Licensed research/open corpora | Consent handled by the corpus publisher under its licence. See `docs/HANDOFF.md` §7. |
+| ElevenLabs scripted-attacker audio (`backend/app/elevenlabs_agent.py`, added 2026-09-08) | Hosted TTS of a **fictional** scam caller ("Rahul", a bank officer who does not exist), spoken by a stock or prompt-designed voice | No person cloned. **Enforced in code**, not by policy: `_assert_stock_voice` reads the voice's category from ElevenLabs and refuses `cloned` and `professional`; a voice whose category cannot be fetched is also refused, because unverified is not permitted. Refusals fall back to the DSP signal *and are reported*, never hidden. Nothing is written to `demo_audio/` — the audio exists only in memory. |
 
 ---
 
@@ -35,6 +36,10 @@
 5. Raw recordings are **never committed to git**. `.gitignore` excludes `demo_audio/*.wav`.
    A committed training clip in a public repo is a data breach.
 6. A person's consent to *enrolment* is not consent to *cloning*. Record them separately.
+7. **Hosted TTS is bound by rules 1–3 exactly as local models are.** Setting `ELEVENLABS_VOICE_ID`
+   to a voice cloned from a real person is a rule-2 violation whether or not the clone was made
+   here, and the code refuses it. Do not add an override; if you find yourself wanting one, the
+   demo needs a different voice, not a weaker gate.
 
 ---
 

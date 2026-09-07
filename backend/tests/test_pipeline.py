@@ -265,8 +265,8 @@ def test_audiosocket_ingest_forwards_only_derived_windows():
             self.windows = []
             self.closed = []
 
-        async def start(self, call_id):
-            self.started.append(call_id)
+        async def start(self, call_id, metadata=None):
+            self.started.append((call_id, metadata))
 
         async def push(self, call_id, window):
             self.windows.append((call_id, window))
@@ -313,7 +313,7 @@ def test_audiosocket_ingest_forwards_only_derived_windows():
                 if gateway.closed:
                     break
                 await asyncio.sleep(.01)
-            assert gateway.started == [str(call_id)]
+            assert gateway.started == [(str(call_id), None)]
             assert gateway.closed == [str(call_id)]
             assert len(gateway.windows) == 1
             forwarded = gateway.windows[0][1]

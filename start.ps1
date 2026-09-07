@@ -7,6 +7,22 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = $PSScriptRoot
 
+# Load .env if the operator has one. Keys reach the child processes through the environment,
+# never through a command line, so they do not appear in the process list. See .env.example.
+$envFile = Join-Path $projectRoot '.env'
+if (Test-Path -LiteralPath $envFile) {
+    foreach ($line in Get-Content -LiteralPath $envFile) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith('#')) { continue }
+        $split = $trimmed.IndexOf('=')
+        if ($split -lt 1) { continue }
+        $name = $trimmed.Substring(0, $split).Trim()
+        $value = $trimmed.Substring($split + 1).Trim()
+        if ($value) { Set-Item -Path "Env:$name" -Value $value }
+    }
+    Write-Host 'Loaded .env'
+}
+
 $pythonPath = Join-Path $projectRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $pythonPath)) {
     $pythonPath = (Get-Command python -ErrorAction SilentlyContinue).Source
@@ -34,9 +50,10 @@ foreach ($port in @(8000, 8801, 5173)) {
 & $pythonPath (Join-Path $projectRoot 'backend\generate_fixtures.py')
 
 # Build the gateway up front so a compile error surfaces here rather than as a dead port.
-$gatewayExe = Join-Path $projectRoot 'gateway\voxguard.exe'
+$gatewayDir = Join-Path $projectRoot 'gateway'
+$gatewayExe = Join-Path $gatewayDir 'voxguard.exe'
 Write-Host 'Building the Go gateway...'
-& $goPath build -o $gatewayExe ./cmd/voxguard
+& $goPath build -C $gatewayDir -o voxguard.exe ./cmd/voxguard
 if ($LASTEXITCODE -ne 0) { throw 'Gateway build failed.' }
 
 $sidecarProcess = $null

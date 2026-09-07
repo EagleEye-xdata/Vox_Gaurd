@@ -10,5 +10,8 @@ demo_audio/*.wav
 !demo_audio/.gitkeep
 gateway/voxguard
 gateway/voxguard.exe
+gateway/voxguard.exe~
 
 .hallmark/
+.env
+

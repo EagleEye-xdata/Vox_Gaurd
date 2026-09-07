@@ -3,7 +3,7 @@
 > **Living document.** Update it as part of every work unit, not at the end. If you are a new
 > session: read `CLAUDE.md` first, then this file, then `docs/12-BUILD_CHECKLIST.md`.
 
-**Last updated:** 2026-09-07 · **Branch:** `codex/voiceshield-mvp` · **Phase:** 0 (Demo MVP)
+**Last updated:** 2026-09-08 · **Branch:** `codex/voiceshield-mvp` · **Phase:** 0 (Demo MVP)
 
 ---
 
@@ -76,18 +76,22 @@ v2's core corrections. **Phase 0 is roughly two-thirds complete.**
 | `features.py` | MFCC, log-mel, YIN pitch, jitter/shimmer proxies, spectral flatness, RMS envelope ✅ |
 | `detection.py` | `SpoofClassifier` ABC + `HeuristicClassifier` — **unvalidated**, and see DEF-1 |
 | `speaker_verification.py` | Enrolment, 24-d embedding, consent gate (invariant 14) ✅ |
+| `audiosocket.py` | Asterisk AudioSocket listener (D-2): 8 kHz slin frames → 3 s windows → derived analyses only. Now also accepts *announced* session metadata (label, language, context) for a call about to connect ✅ |
+| `elevenlabs_agent.py` | **New 2026-09-08.** The demo *attacker*: scripted scam personas (hi-en / hi / en) + ElevenLabs TTS, with the invariant-14 voice gate enforced in code and a labelled local fallback ✅ |
+| `ai_caller.py` | **New 2026-09-08.** Streams a synthesised persona into the live path as an AudioSocket *client* — the same frames Asterisk sends, so the demo exercises the live code path with no PBX ✅ |
 
 **Frontend** (`frontend/src/`, React 19 + Vite): band glyph vocabulary (● ◆ ▲ ◌), "Not assessed",
 persistent degraded strip, factor bars, **applied floors rendered separately from evidence**,
 versions always visible, `aria-live` split correctly (assertive for band, off for score ticks),
 `prefers-reduced-motion`, "Live assessment paused — reconnecting". Conforms well to `09`.
 
-**Tests**, all run 2026-09-07:
+**Tests**, all run 2026-09-08:
 
 | Suite | Command | Result |
 |---|---|---|
-| Go | `go -C gateway test ./...` | **162 passing** |
-| Python | `python -m pytest backend/tests -q` | **15 passing** |
+| Go | `go -C gateway test ./...` | **all packages ok** (166 PASS lines incl. subtests) |
+| Python | `python -m pytest backend/tests -q` | **26 passing** |
+| Frontend | `npm run build` (in `frontend/`) | **builds clean**, 22.3 s |
 
 The Go total includes 91 window cases and 8 session replays from
 `gateway/internal/scoring/testdata/golden_windows.json`, emitted by `backend/tools/emit_golden.py`
@@ -195,13 +199,14 @@ spoof-detection performance has been measured at all**.
 | Subsystem | Spec | Notes |
 |---|---|---|
 | Speaker Verification + enrolment | `02` §4, `09` §4.4 | Fusion fully supports it; nothing produces a `VerificationResult`. |
-| Decision Service | `02` §8 (DR-013) | Currently a 4-entry dict. No `required_actions`, `reason_code`, override endpoint, or WAL. |
-| Alert resolve outcomes | `02` §10 | No CONFIRMED_FRAUD / FALSE_POSITIVE / INCONCLUSIVE → no human-in-the-loop feedback loop (`05` §9). |
+| ~~Decision Service~~ | `02` §8 (DR-013) | **Stale row, corrected 2026-09-08.** `internal/decision` is built: the 2026-09-08 live run returned `required_actions`, `reason_code`, `wal_seq` and an origin signature. |
+| ~~Alert resolve outcomes~~ | `02` §10 | **Stale row, corrected 2026-09-08.** `internal/alerts` implements the closed enum and appeals; what is still missing is the `05` §9 feedback loop *consuming* those outcomes. |
 | Appeal flow | `09` §5 | This is a **compliance control**, not a nice-to-have. |
 | Diarisation / multi-track | `04` §6, `05` §5 | Single track only. |
 | `SessionSummary` on close | `04` §7 | Only a `call_completed` ledger row. |
 | Model card | `05` §10 | Absent. |
-| Live call ingest | `01` §2 | File simulation only. **D-2** targets Asterisk/AudioSocket. |
+| Live call ingest from a real PBX | `01` §2 | The **listener** is built and exercised (`audiosocket.py`, and the 2026-09-08 scripted-attacker run drove it end to end). What has **never run** is Asterisk itself: the container, the dialplan, the ARI controller and the WebPhone leg are configured but unverified. |
+| Detector performance vs real TTS | `05` §7 | The ElevenLabs path is tested against a fake HTTP client only. Nobody has yet measured how this detector scores real synthesised speech. |
 
 ---
 
@@ -277,6 +282,8 @@ Expect the multilingual number to be far worse than the English one. **Report bo
 | DEV-3 | ~~Single Python process~~ → **two processes: Go gateway + Python ML sidecar** | **Resolved 2026-09-07.** This is no longer a deviation: `01` §2 always specified Go for the gateway, orchestrator, fusion, aggregator, decision, alert and audit services, and Python only for preprocess/VAD, detection and speaker verification. The all-Python build was the Phase 0 shortcut; the split now matches the spec. | `01` §2 |
 | DEV-4 | Model weights research-only | MLAAD CC BY-NC (D-3) | `05` §1 |
 | DEV-5 | Go↔Python transport is loopback **HTTP/JSON**, not gRPC | `01` §2 specifies a gRPC bidi stream. HTTP/JSON needs no protoc, no `grpcio` build, and no new dependency on either side; the seam is a real process boundary either way, so swapping the transport later is contained to `gateway/internal/sidecar` and `backend/app/sidecar.py`. | `01` §2 |
+| DEV-7 | The ElevenLabs integration is **text-to-speech only**, not the conversational agent `implementation_plan.md` §1 describes | A conversational agent has to stream the *other* side of the call — a real human's microphone — to a vendor for STT. Invariant 1 binds the network as hard as the disk, so that round trip cannot be built without breaking it. The demo therefore has a scripted attacker that speaks and a human who answers; nothing the human says leaves the box. Making it bidirectional is a decision for the human to take explicitly, not something to slide in. | `CLAUDE.md` invariant 1 |
+| DEV-8 | The AI call is placed by an **AudioSocket client inside the sidecar**, not by originating a SIP call | Originating SIP needs a running Asterisk, which has never been up on this machine. The client speaks the same wire protocol into the same listener, so the detection path is identical; what is simulated is the *telephony*, and the response says `simulated: true` rather than implying a PBX was involved. | `16` §Component Details |
 | DEV-6 | The sidecar returns **analyses, not audio**, and Go pulls windows one at a time | `01` §2 draws the audio arrow *into* Python from a Go orchestrator that owns a ring buffer. Inverting it — Python owns the file and the buffer, Go asks for the next analysis — is what makes invariant 1 structurally true rather than a promise: there is no message shape in which the gateway could receive samples. Revisit when live Asterisk ingest (D-2) makes Go the actual arrival point for audio. | `01` §2, invariant 1 |
 
 ---
@@ -293,8 +300,14 @@ Expect the multilingual number to be far worse than the English one. **Report bo
 6. In-house synthetic generation for Hindi/Tamil/Telugu/Bengali/Hinglish via Indic Parler-TTS.
 7. Speaker-, generator-, channel-, and language-disjoint split loader with a leakage test (T-6.3).
 8. Qwen2-Audio QLoRA training run; calibrator on a held-out split; ECE ≤ 0.05 (T-6.1).
-9. Asterisk-in-Docker + AudioSocket live call ingest.
+9. Asterisk-in-Docker + AudioSocket live call ingest. The listener half is done and exercised;
+   what remains is standing the PBX up and running one real WebPhone call through `7000`.
 10. Model card with per-subgroup numbers and the out-of-scope section.
+11. **Point the scripted attacker at the real ElevenLabs API and measure it.** Set
+    `ELEVENLABS_API_KEY`, place each persona, and record what the detector actually scores on
+    hosted TTS — over the 8 kHz channel and, for contrast, at 16 kHz. Until that is done, no
+    claim about detecting ElevenLabs voices may appear in a doc or a demo script. Expect it to
+    score *worse* than the DSP fixture: real speech is not a harmonic stack.
 
 ---
 
@@ -302,6 +315,7 @@ Expect the multilingual number to be far worse than the English one. **Report bo
 
 | Date | Change |
 |---|---|
+| 2026-09-08 | **Scripted attacker + live bridge** (`implementation_plan.md` Phases 1–4). New: `backend/app/elevenlabs_agent.py` (three scam personas in hi-en/hi/en, ElevenLabs TTS, invariant-14 voice gate refusing cloned *and* unverifiable voices, labelled local fallback), `backend/app/ai_caller.py` (AudioSocket client streaming the persona into the live listener at real time), sidecar `GET/POST /internal/ai-call*`, gateway `GET /api/v1/ai-call/personas` + `POST /api/v1/ai-call`, and the `AiCaller` dashboard panel next to the WebPhone. `audiosocket.py` gained announced per-call metadata so a live session carries the persona's language and caller-claimed context. `.env.example` + `.env` loading in `start.ps1`. Measured end to end: **74.88 HIGH → BLOCK**, 2 alerts, 14 ledger rows — **with the local fallback voice, not ElevenLabs**; performance against real TTS remains unmeasured. Suites: all Go packages ok + **26 Python**. Deviations DEV-7 (no conversational agent — invariant 1) and DEV-8 (no SIP origination) recorded. |
 | 2026-09-07 (3) | **Backend split into a Go gateway and a Python ML sidecar**, converging on `01` §2 (DEV-3 resolved). Ported to Go: risk fusion, session aggregation, decision service, alerts, hash-chained ledger, request validation, all 23 endpoints and the WebSocket. Kept in Python: ingestion, preprocessing/VAD, features, detector, speaker verification. Port guarded by 91 golden window vectors + 8 session replays emitted from the pre-port Python implementation. Ledger gained the HMAC origin signature invariant 9 requires and the Python version lacked. Frontend unchanged — same port, same paths, same `{"detail": ...}` error shape. Suites: **162 Go + 15 Python passing**. |
 | 2026-09-07 (2) | **DEF-1…DEF-6 all fixed**, each with a regression test. Detector range made attainable (log-axis flatness map + YIN outlier rejection) → HIGH reachable from the detector alone at 90.95, 21-pt margin. Language gating, simulated adversarial floor, degraded threshold delta, policy rename to `demo-detector-first@2.1.0`. Consent-log gate added and **proven to bite**. Suite 14 → **23 passing**. `verification.md` rewritten. |
 | 2026-09-07 | Handoff created. v2 spec set imported to `docs/`. `CLAUDE.md`, `CONSENT_LOG.md`, `CAPABILITY_MATRIX.md` written. Codebase audited against spec; DEF-1…DEF-6 recorded. Environment and dataset licences verified. Decisions D-1…D-6 confirmed with the human. |

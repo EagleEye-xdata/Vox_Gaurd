@@ -16,6 +16,7 @@ This service binds to loopback and is not the public API. Everything a browser t
 Go gateway on :8000.
 """
 import asyncio
+import logging
 import os
 import time
 from contextlib import asynccontextmanager
@@ -37,6 +38,8 @@ from .speaker_verification import MODEL_VERSION as VERIFIER_VERSION, verifier
 # streams cannot pin an unbounded number of open file handles and generators.
 MAX_OPEN_STREAMS = 32
 
+log = logging.getLogger("voiceshield.sidecar")
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
@@ -55,6 +58,8 @@ class AnalyseRequest(StrictModel):
     identity_id: str | None = Field(default=None, max_length=80)
 
 
+
+
 class EnrolRequest(StrictModel):
     identity_id: str = Field(min_length=3, max_length=80, pattern="^[a-zA-Z0-9_-]+$")
     display_name: str = Field(min_length=2, max_length=100)
@@ -63,6 +68,10 @@ class EnrolRequest(StrictModel):
 
 
 streams: dict[str, dict] = {}
+
+# Strong references to in-flight demo calls. asyncio only weakly references running tasks, so
+# dropping these would let the garbage collector hang up a call mid-sentence.
+ai_calls: set[asyncio.Task] = set()
 
 
 @asynccontextmanager
@@ -73,6 +82,11 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        for call in list(ai_calls):
+            call.cancel()
+        if ai_calls:
+            await asyncio.gather(*ai_calls, return_exceptions=True)
+        ai_calls.clear()
         await live_ingest.close()
         for state in list(streams.values()):
             state["generator"].close()
@@ -224,6 +238,8 @@ async def analyse(body: AnalyseRequest):
         audio.fill(0)
         raise HTTPException(422, "Samples must be normalized to [-1, 1].")
     return await asyncio.to_thread(analyse_buffer, audio, body.identity_id)
+
+
 
 
 @app.post("/internal/enrolments")

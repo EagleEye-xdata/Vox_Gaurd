@@ -1,6 +1,6 @@
 # Capability Matrix
 
-Generated: 2026-09-07 · Environment: Windows 11, Python 3.11.9, Node 24.14.0, PowerShell 5.1 +
+Generated: 2026-09-07 · Re-verified: 2026-09-08 · Environment: Windows 11, Python 3.11.9, Node 24.14.0, PowerShell 5.1 +
 Git Bash · Repo on `F:\vox_gaurd`
 
 > Required by `docs/AGENT_PROMPT.md` STEP 0. Re-verify at the start of each session; tooling
@@ -22,7 +22,7 @@ Git Bash · Repo on `F:\vox_gaurd`
 | ffmpeg | **8.1.1** (winget Gyan build) | Codec laundering for T-5.5: G.711, Opus, AMR-NB. Also 8 kHz narrowband channel augmentation for D-2. |
 | git-lfs | **3.7.1** | Required for Hugging Face dataset pulls. |
 | Network egress | Available (web search + HF reachable) | Dataset download viable; mirror early per `12` §0. |
-| Go toolchain | ❌ **Unavailable in the current environment** (`go` is absent from PATH and `C:\Program Files\Go\bin\go.exe` does not exist; rechecked 2026-09-07) | Go gateway and telephony source can be reviewed, but cannot be compiled or tested on this host until Go is installed again. |
+| Go toolchain | ✅ **go1.27.1 windows/amd64** at `C:\Program Files\Go\bin\go.exe` (re-verified 2026-09-08; the 2026-09-07 entry saying it was absent is superseded) | `go -C gateway test ./...` and `go -C telephony build ./...` both run on this host. |
 | Go race detector | ❌ **Unavailable on this box** | `-race` needs cgo. The only gcc on PATH is `C:\MinGW` (`mingw32`, 32-bit: *"sorry, unimplemented: 64-bit mode not compiled in"*), and WSL2's gcc has no libc headers (`libc6-dev` absent, `sudo` needs a password). See Gaps. |
 | Training stack | ✅ transformers 4.57.6 · datasets 5.0.1 · peft 0.20.0 · accelerate 1.14.0 · **bitsandbytes 0.50.2** | Installed 2026-09-07. |
 | bnb 4-bit CUDA backend | ✅ **Verified**: `Linear4bit` fp16 forward pass on the 4060 succeeds | The risky part on Windows. QLoRA is viable here. |
@@ -48,6 +48,7 @@ Git Bash · Repo on `F:\vox_gaurd`
 | Capability | Status | Use for | Do NOT use for |
 |---|---|---|---|
 | MCP servers | None connected | — | — |
+| ElevenLabs TTS API | ⚠️ Code path built and tested against a fake; **never exercised against the real API** (no `ELEVENLABS_API_KEY` on this box) | Synthesising the scripted attacker for a live demo | Any claim about how the detector scores real ElevenLabs audio — that is unmeasured |
 | WebSearch / WebFetch | ✅ Available | Dataset licence verification, model card references, published EER baselines | Anything that must be reproducible offline at demo time |
 
 ## Subagents / parallelism
@@ -69,7 +70,6 @@ Git Bash · Repo on `F:\vox_gaurd`
 | Indian-language spoof corpus | Does not exist off the shelf | Generate in-house with Indic Parler-TTS (Apache 2.0) / IndicF5, bound by invariant 14. |
 | CI runner | None configured | Tests run locally; record results in `docs/verification.md` with the date and the command. |
 | `go test -race` | No 64-bit C toolchain | Concurrency in `gateway/internal/session` is currently guarded by review and by the `httptest` suite, **not** by the race detector. To close this, either `winget install BrechtSanders.WinLibs.POSIX.UCRT` (64-bit mingw-w64 on Windows) or, in WSL2, `sudo apt install build-essential` and then `go test -race ./...`. Until one of those is done, do not claim the gateway is race-free. |
-| Go compile/test | Go executable is currently absent | Reinstall Go, then run `go -C gateway test ./...` and `go -C telephony test ./...` before merging the integration branch. |
 
 ---
 
@@ -84,6 +84,7 @@ Git Bash · Repo on `F:\vox_gaurd`
 | Detector training | PyTorch + peft QLoRA on the 4060 | XLS-R-300m + AASIST head |
 | Calibration + ECE | scikit-learn / plain NumPy | — |
 | Charts for the model card | `dataviz` skill | matplotlib directly |
-| Live call ingest | Docker + Asterisk AudioSocket | Browser mic over the existing WebSocket |
+| Live call ingest | Docker + Asterisk AudioSocket | `backend/app/ai_caller.py` simulated bridge: a scripted attacker speaking the AudioSocket wire protocol into the same listener, so the live path runs with no PBX |
+| Demo attacker voice | ElevenLabs TTS (stock voices only, invariant 14 enforced in code) | Deterministic local DSP signal, labelled `local-synthetic@1.0.0` and never presented as speech |
 | Dashboard changes | React in `frontend/` | — |
 | Submission deck / write-up | `pptx-official` / `docx-official` | Markdown |

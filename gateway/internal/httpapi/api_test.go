@@ -33,6 +33,10 @@ type fakeSidecar struct {
 	// enrolCalls records bodies posted to the proxied enrolment endpoint, so a test can prove the
 	// gateway forwarded rather than parsed.
 	enrolCalls []string
+
+	// aiCalls records demo-attacker requests, so a test can prove the gateway passed the
+	// operator's persona and pace through unchanged.
+	aiCalls []map[string]any
 }
 
 func newFakeSidecar(windows []map[string]any) *fakeSidecar {
@@ -104,6 +108,7 @@ func (f *fakeSidecar) handler() http.Handler {
 		w.WriteHeader(http.StatusForbidden)
 		write(w, map[string]string{"detail": "Enrolment rejected: no consent record. (Invariant 14)"})
 	})
+
 	mux.HandleFunc("POST /internal/analyse", func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 		write(w, map[string]any{"scored": true, "forwarded_bytes": len(raw)})
@@ -640,3 +645,4 @@ func TestHealthReportsDegradedWhenTheSidecarIsDown(t *testing.T) {
 		t.Error("health does not assert raw_audio_persistence=false")
 	}
 }
+

@@ -70,9 +70,49 @@ sitting on a band threshold that difference changes the band.
 | `language: fr` | `language_supported: false`, **49.17 MEDIUM**, `degraded_reasons: [unsupported_language]` |
 | WebSocket `/ws/audio/{id}` | 23 events, terminated with `complete`, session summary attached, no audio-shaped keys on the wire |
 
+## 2026-09-08 — scripted attacker over the live AudioSocket path
+
+The demo caller from `implementation_plan.md` Phases 1–2: `backend/app/elevenlabs_agent.py`
+(script + voice, with the invariant-14 gate) and `backend/app/ai_caller.py` (AudioSocket client).
+
+```
+$ go -C gateway test ./...        all packages ok, 166 PASS lines incl. subtests (+3 AI-call tests)
+$ python -m pytest backend/tests -q    26 passed   (was 15; +10 new, 1 fake updated)
+$ go -C telephony build ./...     ok
+```
+
+**Live end-to-end run**, real sidecar + real gateway + real AudioSocket frames, persona
+`bank_verification_hinglish` at 4× real time:
+
+| Check | Result |
+|---|---|
+| Session created from the AudioSocket UUID frame | `969fa58f-…`, label `AI attacker demo - Bank verification (Hinglish)`, language `hi-en` |
+| Windows scored | 11, band timeline UNKNOWN → … → **HIGH** |
+| Final session score | **74.88 HIGH**, EWMA 74.88, peak 74.49 |
+| Decision | **BLOCK**, reason `SYNTHETIC_HIGH_VALUE_OR_NEW_BENEFICIARY_RISK`, WAL seq 1022, HMAC origin signature present |
+| Alerts | **2** — one per band escalation (MEDIUM, then HIGH), not one per window |
+| Ledger | 14 records including `call_completed`, hash-chained |
+| Audio-shaped keys in the forwarded windows | none |
+
+> **The voice in that run was the local fallback, not ElevenLabs.** `ELEVENLABS_API_KEY` is not
+> set on this machine, so the attacker was the deterministic DSP signal
+> `local-synthetic@1.0.0`. **74.88 is therefore a measurement of the pipeline, not of the
+> detector against real synthesised speech.** How this detector scores actual ElevenLabs audio is
+> **unmeasured**, and `implementation_plan.md` §5's expected "85–95" is an expectation, not a
+> result. The ElevenLabs request path is covered by tests against a fake HTTP client only; it has
+> never run against the live API.
+
+| Invariant-14 gate | Result |
+|---|---|
+| Voice with category `cloned` | refused — `VoiceNotPermitted`, message cites `docs/CONSENT_LOG.md` |
+| Voice with category `professional` | refused |
+| Voice whose category cannot be fetched (network error) | **refused** — an unverifiable voice is not a permitted one |
+| Refusal path | falls back to the local synthesiser **and reports the refusal** as `fallback_reason` in the API and on the dashboard |
+
 ## Not yet verified
 
-- `npm run build` — not re-run this session (`node_modules` not installed).
+- `npm run build` — **run 2026-09-08, built in 22.3 s with no errors** (the AI-caller panel compiles).
+- The AI-caller panel has **not been clicked through in a browser** this session; only the build and the API behind it were exercised.
 - **`go test -race` has never been run.** No 64-bit C toolchain exists on this machine; see
   `CAPABILITY_MATRIX.md` Gaps. The gateway's concurrency (one goroutine per call, the shared
   alert store and event log) is guarded by review and by the `httptest` suite only. One race was
@@ -88,6 +128,7 @@ sitting on a band threshold that difference changes the band.
 
 | Date | Result |
 |---|---|
+| 2026-09-08 | **All Go packages ok (166 PASS lines incl. subtests) + 26 Python passed.** Scripted attacker reaches HIGH/BLOCK over the live AudioSocket path. Detector performance against real TTS still unmeasured. |
 | 2026-09-07 (3) | **162 Go + 15 Python passed.** Backend split per `01` §2; fusion port verified against 99 golden vectors from the Python reference. |
 | 2026-09-07 | 23 passed. DEF-1…DEF-6 fixed; consent gate added and proven to bite. |
 | 2026-09-06 | 7 passed. Superseded — the suite has since grown to 23 and one test was failing when re-run on 09-07 (see DEF-1). |

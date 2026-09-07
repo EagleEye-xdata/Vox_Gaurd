@@ -66,6 +66,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/enrolments", s.listEnrolments)
 	mux.HandleFunc("DELETE /api/v1/enrolments/{identity_id}", s.revokeEnrolment)
 
+
 	mux.HandleFunc("POST /api/v1/risk-score", s.riskScore)
 	mux.HandleFunc("GET /api/v1/risk-score/{call_id}", s.currentRisk)
 	mux.HandleFunc("POST /api/v1/decisions/{call_id}/override", s.overrideDecision)
@@ -411,6 +412,7 @@ func (s *Server) revokeEnrolment(w http.ResponseWriter, r *http.Request) {
 	}
 	s.ok(w, map[string]string{"status": "revoked", "identity_id": identity})
 }
+
 
 func (s *Server) riskScore(w http.ResponseWriter, r *http.Request) {
 	var body schema.Scores

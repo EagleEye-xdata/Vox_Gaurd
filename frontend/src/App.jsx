@@ -25,7 +25,7 @@ import SupervisorOverrideModal from "./components/SupervisorOverrideModal";
 import AppealModal from "./components/AppealModal";
 import SessionSummaryModal from "./components/SessionSummaryModal";
 import EnrolmentModal from "./components/EnrolmentModal";
-import WebPhone from "./components/WebPhone";
+import TwoWayCallModal from "./components/TwoWayCallModal";
 
 export default function App() {
   const [calls, setCalls] = useState([]),
@@ -40,6 +40,7 @@ export default function App() {
     [verifying, setVerifying] = useState(false),
     [verification, setVerification] = useState(null),
     [page, setPage] = useState("monitor"),
+    [twoWayCallOpen, setTwoWayCallOpen] = useState(false),
     [filename, setFilename] = useState(""),
     [label, setLabel] = useState("CFO transfer request"),
     [amount, setAmount] = useState(250000),
@@ -382,12 +383,25 @@ export default function App() {
               </p>
             </div>
             {page === "monitor" && (
-              <button
-                className="primary"
-                onClick={() => dialog.current.showModal()}
-              >
-                <Play size={16} /> Simulate call
-              </button>
+              <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                <button
+                  className="primary"
+                  style={{
+                    background: "linear-gradient(135deg, #4f46e5, #06b6d4)",
+                    border: "none",
+                    boxShadow: "0 0 15px rgba(79, 70, 229, 0.4)",
+                  }}
+                  onClick={() => setTwoWayCallOpen(true)}
+                >
+                  <Radio size={16} /> 2-Way Live Call
+                </button>
+                <button
+                  className="secondary"
+                  onClick={() => dialog.current.showModal()}
+                >
+                  <Play size={16} /> Simulate call
+                </button>
+              </div>
             )}
           </div>
 
@@ -560,8 +574,56 @@ export default function App() {
           )}
 
           {page === "telephony" && (
-            <div style={{ display: "flex", justifyContent: "center", padding: "24px 0" }}>
-              <WebPhone />
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 20,
+                padding: "36px 20px",
+                maxWidth: 700,
+                margin: "0 auto",
+                textAlign: "center",
+              }}
+            >
+              <div
+                style={{
+                  width: 64,
+                  height: 64,
+                  borderRadius: "50%",
+                  background: "linear-gradient(135deg, #4f46e5, #06b6d4)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  boxShadow: "0 0 30px rgba(79, 70, 229, 0.4)",
+                }}
+              >
+                <Radio size={32} color="white" />
+              </div>
+
+              <h2>Real-Time Two-Way AI Voice Call</h2>
+              <p style={{ color: "var(--color-muted)", fontSize: 14, maxWidth: 500 }}>
+                Initiate an interactive live conversation with an AI Scammer bot. Speak into your microphone, hear the synthetic voice reply, and observe VoxGuard's real-time deepfake detection, risk scoring, and automated policy blocking.
+              </p>
+
+              <button
+                className="primary"
+                style={{
+                  padding: "12px 28px",
+                  fontSize: 15,
+                  fontWeight: 600,
+                  background: "linear-gradient(135deg, #4f46e5, #06b6d4)",
+                  border: "none",
+                  borderRadius: 12,
+                  boxShadow: "0 0 20px rgba(79, 70, 229, 0.5)",
+                  cursor: "pointer",
+                }}
+                onClick={() => setTwoWayCallOpen(true)}
+              >
+                <Radio size={18} style={{ marginRight: 8 }} />
+                Launch 2-Way Live Call
+              </button>
             </div>
           )}
         </main>
@@ -703,6 +765,14 @@ export default function App() {
         onEnroll={handleEnrollSpeaker}
         onRevoke={handleRevokeEnrolment}
         busy={busy}
+      />
+
+      <TwoWayCallModal
+        isOpen={twoWayCallOpen}
+        onClose={() => setTwoWayCallOpen(false)}
+        onSessionCreated={(callId) => {
+          setSelected(callId);
+        }}
       />
     </div>
   );

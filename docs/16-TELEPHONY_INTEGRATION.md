@@ -160,6 +160,43 @@ The Go Gateway (`:8000`) manages live session lifecycle:
 | `/api/v1/calls` | GET | List calls (including live sessions) for frontend |
 | `/api/v1/stream/{call_id}` | WS | Push live updates to browser dashboard |
 
+### Scripted attacker / simulated bridge (`backend/app/ai_caller.py`, `elevenlabs_agent.py`)
+
+Added 2026-09-08 for `implementation_plan.md` Phases 1–2. It gives the demo an adversary without
+requiring a PBX, and it does so **through the live path rather than around it**: `ai_caller`
+opens a TCP connection to the same AudioSocket listener Asterisk would use and writes the same
+frames — a UUID frame, 20 ms slin frames at 8 kHz, then hangup. Nothing downstream can tell the
+difference, which is the point of running it this way.
+
+```
+elevenlabs_agent (text -> speech, 16 kHz)  ->  downsample to 8 kHz  ->  ai_caller
+        |                                                                   |
+        | stock voices only; a cloned or unverifiable                       | AudioSocket frames
+        | voice is refused (invariant 14)                                    v
+                                                        audiosocket.py listener :9019
+                                                                            |
+                                                        derived windows -> Go gateway -> dashboard
+```
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/v1/ai-call/personas` | GET | List the scripted personas and the voice that would speak them |
+| `/api/v1/ai-call` | POST | `{"persona": "...", "pace": 1.0}` — synthesise and place a simulated call |
+
+What is real and what is not:
+
+- **Real:** the AudioSocket frames, the 8 kHz narrowband channel (D-2), the windowing, the
+  detector, the fusion, the session hysteresis, the decision, the alerts and the ledger chain.
+- **Simulated:** the telephony. No SIP call is originated, no PBX is involved, and the response
+  and session label both say so. See DEV-8 in `docs/HANDOFF.md`.
+- **Not built:** a conversational agent. `ai_caller` only speaks; nothing listens. Streaming the
+  human leg to a vendor for speech-to-text would send call audio to a third party, which
+  invariant 1 forbids. See DEV-7.
+
+Without `ELEVENLABS_API_KEY` the caller falls back to a deterministic DSP signal labelled
+`local-synthetic@1.0.0`, and the dashboard shows the reason. That signal is **not speech**, so a
+score obtained from it says nothing about detecting real synthesised voices.
+
 ### Go ARI Controller (`telephony/cmd/controller`)
 
 Orchestrates Asterisk call lifecycle:

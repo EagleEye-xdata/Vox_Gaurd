@@ -150,6 +150,7 @@ func finiteBetween(value, low, high float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= low && value <= high
 }
 
+
 // Enrolment is an enrolled speaker profile as listed by the sidecar.
 type Enrolment struct {
 	IdentityID   string `json:"identity_id"`
@@ -230,6 +231,7 @@ func (c *Client) Enrolments(ctx context.Context) ([]Enrolment, error) {
 func (c *Client) RevokeEnrolment(ctx context.Context, identityID string) error {
 	return c.do(ctx, http.MethodDelete, "/internal/enrolments/"+url.PathEscape(identityID), nil, nil)
 }
+
 
 // Proxy streams a request straight through to the sidecar under the given path.
 //

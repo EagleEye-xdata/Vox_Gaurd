@@ -184,6 +184,30 @@ type Start struct {
 	IdentityID               *string  `json:"identity_id"`
 }
 
+// AICall asks the sidecar to place a scripted attacker call into the live path. It carries no
+// audio and no scores: the sidecar synthesises the persona's script itself and streams it over
+// AudioSocket exactly as Asterisk would.
+type AICall struct {
+	Persona string   `json:"persona"`
+	Pace    *float64 `json:"pace"`
+}
+
+// Validate bounds the persona name and the playback pace.
+func (a *AICall) Validate() error {
+	if l := len(a.Persona); l < 1 || l > 80 || !identityIDPattern.MatchString(a.Persona) {
+		return invalid("persona must be a known persona id.")
+	}
+	if a.Pace == nil {
+		a.Pace = ptr(1.0)
+	}
+	// Real time is 1.0. The ceiling keeps a demo call from arriving faster than the detector can
+	// consume it, which would shed windows rather than score them.
+	if p := *a.Pace; math.IsNaN(p) || p < 0.25 || p > 40 {
+		return invalid("pace must be between 0.25 and 40 times real time.")
+	}
+	return nil
+}
+
 // LiveStart opens a live Asterisk session. Raw media arrives at the Python AudioSocket listener;
 // this request carries only metadata used by the Go session and scoring layers.
 type LiveStart struct {
