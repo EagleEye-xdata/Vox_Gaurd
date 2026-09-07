@@ -53,7 +53,7 @@
 │                                 ▼          │
 │                        ┌──────────────┐    │
 │                        │ Risk Scoring │    │
-│                        │ (EMA + Fuse) │    │
+│                        │ (v2 Policy)  │    │
 │                        └──────┬───────┘    │
 │                               ▼            │
 │              ┌────────┐  ┌────────────┐    │
@@ -190,7 +190,7 @@ main.py
   ├── preprocessing.py (preprocess(), SAMPLE_RATE=16000)
   ├── features.py      (extract())
   ├── detection.py     (classifier = HeuristicClassifier())
-  ├── risk_scoring.py  (fuse(), RollingRisk)
+  ├── risk_scoring.py  (score_window(), SessionRisk)
   ├── alerts.py        (make_alert())
   ├── ledger.py        (Ledger)
   └── schemas.py       (Start, AudioChunk, Scores, AlertRequest, LedgerEvent)
@@ -201,7 +201,7 @@ main.py
 ```
 WAV File (demo_audio/)
       │
-      ▼ soundfile.SoundFile  —  chunks of 3 seconds
+      ▼ soundfile.SoundFile  —  3-second windows, 1-second hop
       │  • Reads float32
       │  • Downmix stereo → mono (mean)
       │  • Resample to 16 000 Hz via resample_poly (GCD-safe)
@@ -229,18 +229,17 @@ WAV File (demo_audio/)
       │  • synthetic_score = 0.55×spectral + 0.45×prosody
       │  • classification  → "SYNTHETIC" if >= 0.5 else "REAL"
       │
-      ▼ risk_scoring.fuse()          [Python]
-      │  • acoustic = 0.55×spectral + 0.45×prosody (or 3-way when speaker enrolled)
-      │  • Context adjustments:
-      │      +8  if unknown caller number
-      │      +8  if transaction >= 100,000
-      │      +4  if call hour < 06:00 or >= 22:00
-      │  • risk_score in [0, 100]
+      ▼ risk_scoring.score_window()  [Python]
+      │  • AI .60, speaker .20, context .20; active weights renormalize
+      │  • AI probability shrinks toward .5 according to confidence
+      │  • Context recursively renormalizes over available, sourced fields
+      │  • Adversarial/replay/degraded policy floors are applied last
+      │  • LOW 0–39 · MEDIUM 40–69 · HIGH 70–100 · UNKNOWN has no score
       │
-      ▼ risk_scoring.RollingRisk.update()
-         • EMA: value = 0.3×new + 0.7×old
-         • sustained_high_risk = streak >= 2 AND total_windows >= 3  (score >= 65)
-         • authenticity_score = 100 − risk_score
+      ▼ risk_scoring.SessionRisk.update()
+         • EWMA α=.35 plus decaying peak: max(EWMA, peak−8), peak decay=.98
+         • 2-of-3 escalation and 5-of-6 de-escalation with a 5-point margin
+         • One deterministic alert per MEDIUM/HIGH band escalation
 ```
 
 ### 5.3 REST API Endpoints
@@ -277,7 +276,7 @@ The server sends buffered events via a cursor loop (polling every 100 ms). Max 3
 
 - **Storage**: SQLite (`backend/data/ledger.db`) — single table `ledger(id, previous, payload, hash)`.
 - **Language**: Python + `sqlite3` stdlib + `hashlib.sha256`.
-- **Chain**: Each row stores `SHA-256(previous_hash + JSON_payload)`. Genesis previous = `"0"×64`.
+- **Chain**: Version 2 rows store `SHA-256(canonical_JSON_payload + previous_hash)`. Genesis previous = `"0"×64`; verification remains compatible with earlier local demo rows.
 - **Verification**: `GET /api/v1/ledger/verify/all` walks the chain linearly; `verify/{hash}` finds a specific entry.
 - **Caveats**: Local only, not distributed, not cryptographically signed — for audit-trail demo purposes.
 
@@ -359,30 +358,29 @@ User clicks "Run simulation"
 
 > **Disclaimer**: The current classifier is an acoustic heuristic, not a validated ML model.
 
-### Score Fusion Formula
+### Window Score
 
 ```
-acoustic_score =
-  if speaker NOT enrolled:
-      0.55 × spectral_score + 0.45 × prosody_score
-  if speaker enrolled:
-      0.45 × spectral_score + 0.35 × prosody_score + 0.20 × (1 − speaker_match_score)
+ai_term = 0.5 + (p_synthetic − 0.5) × confidence
+speaker_term = 1 − match_score                  # only with a valid enrollment
+context_term = weighted mean of available attestation, urgency, history, transaction
 
-context_adjustment =
-    +8  if known_number == False
-    +8  if transaction_size >= 100,000
-    +4  if hour < 6 or hour >= 22
-
-risk_score = clamp(acoustic_score × 100 + context_adjustment, 0, 100)
+base_score = 100 × weighted_mean(active signal terms)
+discounted = base_score − 10 only when attestation, speaker match, transaction, and health gates all pass
+window_score = clamp(max(discounted, applicable policy floors), 0, 100)
 ```
 
-### EMA Smoothing (RollingRisk)
+Signals that are unavailable are excluded from the denominator. No speaker enrollment is a normal inactive state. Fewer than three voiced seconds yields UNKNOWN; detector failure and unsupported language enter degraded mode with a 40-point floor when another signal is active.
+
+### Session Scoring and Hysteresis
 
 ```
-value_t = 0.3 × raw_score_t  +  0.7 × value_{t-1}
-sustained_high_risk = (streak >= 2) AND (total_windows >= 3)
-  where streak = consecutive windows with value >= 65
+ewma_t = 0.35 × window_score_t + 0.65 × ewma_(t−1)
+peak_t = max(0.98 × peak_(t−1), window_score_t)
+session_score_t = max(ewma_t, peak_t − 8)
 ```
+
+The band escalates after two of the last three windows qualify. It recovers after five of six windows sit at least five points below the lower boundary. Adversarial and replay floors can escalate immediately.
 
 ---
 

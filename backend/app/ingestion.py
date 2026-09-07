@@ -17,11 +17,16 @@ def resolve_audio(name: str) -> Path:
             raise ValueError("Use a mono/stereo WAV up to 5 minutes and 96 kHz.")
     return path
 
-def chunks(path: Path, seconds: float = 3):
+def chunks(path: Path, seconds: float = 3, hop_seconds: float = 1):
     with sf.SoundFile(path) as f:
-        while True:
-            raw = f.read(int(f.samplerate * seconds), dtype="float32", always_2d=True)
-            if not len(raw):
+        window_frames = int(f.samplerate * seconds)
+        hop_frames = int(f.samplerate * hop_seconds)
+        position = 0
+        while position < len(f):
+            f.seek(position)
+            raw = f.read(window_frames, dtype="float32", always_2d=True)
+            if len(raw) < window_frames:
+                raw.fill(0)
                 break
             mono = raw.mean(axis=1)
             raw.fill(0)
@@ -32,3 +37,4 @@ def chunks(path: Path, seconds: float = 3):
                 yield audio
             finally:
                 audio.fill(0)
+            position += hop_frames

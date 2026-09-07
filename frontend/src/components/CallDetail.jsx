@@ -1,23 +1,41 @@
-import { AudioLines, Fingerprint, Activity, Timer, Square } from "lucide-react";
-import { riskClass, riskLabel } from "./Dashboard";
+import { AudioLines, Activity, Timer, Square, ShieldCheck } from "lucide-react";
+import { bandMeta } from "./Dashboard";
+
+const titleCase = (value = "") =>
+  value.replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
 export default function CallDetail({ call, onStop, busy }) {
-  const latest = call?.latest,
-    score = call?.risk_score,
-    history = call?.history || [];
-  const env = latest?.features.rms_envelope || [];
+  const latest = call?.latest;
+  const history = call?.history || [];
+  const env = latest?.features?.rms_envelope || [];
+  const meta = bandMeta(call?.band);
   const points = history
     .map(
-      (v, i) =>
-        `${20 + (i * 660) / Math.max(history.length - 1, 1)},${150 - v * 1.2}`,
+      (value, index) =>
+        `${20 + (index * 660) / Math.max(history.length - 1, 1)},${150 - value * 1.2}`,
     )
     .join(" ");
+
   return (
     <section className="panel detail">
+      {call?.degraded && (
+        <div className="degraded-strip" role="status">
+          Assessment is degraded ·{" "}
+          {call.degraded_reasons.map(titleCase).join(" · ")}
+        </div>
+      )}
       <div className="panel-heading">
         <h2>
           <AudioLines size={17} /> Signal analysis
         </h2>
-        <span className={`badge ${riskClass(score)}`}>{riskLabel(score)}</span>
+        <span
+          className={`badge band-badge ${meta.className}`}
+          aria-live="assertive"
+          aria-label={`Assessment: ${meta.label}`}
+        >
+          <span aria-hidden="true">{meta.glyph}</span>
+          {meta.label}
+        </span>
       </div>
       <div className="analysis-title">
         <div>
@@ -25,13 +43,12 @@ export default function CallDetail({ call, onStop, busy }) {
           <h3>{call?.label || "Waiting for a call"}</h3>
           <p>
             {call
-              ? `${call.chunks_processed} windows processed · ${call.dropped_chunks} skipped by VAD`
+              ? `${call.windows_scored} scored · ${call.unassessed_windows} not assessed · ${call.dropped_chunks} rejected by VAD`
               : "Start a simulation to see acoustic evidence."}
           </p>
           {latest?.classification && (
             <p className="classification">
-              Latest window: <strong>{latest.classification}</strong> ·
-              heuristic label
+              Latest heuristic label: <strong>{latest.classification}</strong>
             </p>
           )}
           {call?.error && (
@@ -46,23 +63,24 @@ export default function CallDetail({ call, onStop, busy }) {
           </button>
         )}
       </div>
+
       <div className="signal-layout">
         <div className="authenticity">
-          <span className="eyebrow">VOICE AUTHENTICITY</span>
-          <div className={`big-score ${riskClass(score)}`}>
-            {score == null ? "—" : Math.round(100 - score)}
+          <span className="eyebrow">SESSION RISK</span>
+          <div className={`big-score ${meta.className}`} aria-live="off">
+            {call?.risk_score == null ? "—" : Math.round(call.risk_score)}
             <span>/100</span>
           </div>
           <p>
-            Inverse of rolling risk.
-            <br />
-            Uncalibrated demo indicator.
+            {call?.risk_score == null
+              ? "Not assessed. More voiced audio or an active signal is required."
+              : "Decision support score. Higher means more verification is required."}
           </p>
         </div>
         <div className="wave-box">
           <div className="wave-heading">
             <span>Audio energy envelope</span>
-            <span>16 kHz · 3s windows</span>
+            <span>16 kHz · 3 s window / 1 s hop</span>
           </div>
           <svg
             viewBox="0 0 540 105"
@@ -70,13 +88,13 @@ export default function CallDetail({ call, onStop, busy }) {
             aria-label="Measured RMS audio energy envelope"
           >
             <line x1="0" y1="52" x2="540" y2="52" className="baseline" />
-            {env.map((v, i) => (
+            {env.map((value, index) => (
               <line
-                key={i}
-                x1={i * 5.6 + 3}
-                y1={52 - Math.min(47, v * 180)}
-                x2={i * 5.6 + 3}
-                y2={52 + Math.min(47, v * 180)}
+                key={index}
+                x1={index * 5.6 + 3}
+                y1={52 - Math.min(47, value * 180)}
+                x2={index * 5.6 + 3}
+                y2={52 + Math.min(47, value * 180)}
                 className="wave-bar"
               />
             ))}
@@ -86,76 +104,103 @@ export default function CallDetail({ call, onStop, busy }) {
               <i
                 className={`dot ${call?.status === "streaming" ? "" : "muted-dot"}`}
               />
-              {latest
-                ? "Derived from latest scored window"
-                : "No audio processed"}
+              {latest ? "Latest derived envelope" : "No audio processed"}
             </span>
             <span>No raw audio retained</span>
           </div>
         </div>
       </div>
-      <div className="subscores">
-        {[
-          [AudioLines, "Spectral artifacts", latest?.spectral_score],
-          [Activity, "Prosody irregularity", latest?.prosody_score],
-          [Fingerprint, "Speaker match", null],
-        ].map(([Icon, label, v]) => (
-          <div className="subscore" key={label}>
-            <div>
-              <Icon size={16} />
-              <span>{label}</span>
-            </div>
-            <strong>{v == null ? "—" : `${Math.round(v * 100)}%`}</strong>
-            <div className="meter">
-              <span style={{ width: `${(v || 0) * 100}%` }} />
-            </div>
-            <small>
-              {v == null
-                ? label === "Speaker match"
-                  ? "Not enrolled"
-                  : "Awaiting audio"
-                : "Higher indicates more suspicion"}
-            </small>
-          </div>
-        ))}
+
+      <div className="explainability-grid">
+        <div className="explainability-block">
+          <h3>
+            <Activity size={15} /> Contributing factors
+          </h3>
+          {call?.contributing_factors?.length ? (
+            call.contributing_factors.map((factor) => (
+              <div className="factor-row" key={factor.factor}>
+                <span>{titleCase(factor.factor)}</span>
+                <strong>{factor.points.toFixed(2)} pts</strong>
+              </div>
+            ))
+          ) : (
+            <p>Factors will appear after a scored window.</p>
+          )}
+          {latest?.base_score != null && (
+            <>
+              <div className="factor-total"><span>Base score</span><strong>{latest.base_score.toFixed(2)} pts</strong></div>
+              {latest.trust_discount > 0 && <div className="factor-row"><span>Verified trust discount</span><strong>−{latest.trust_discount} pts</strong></div>}
+            </>
+          )}
+        </div>
+        <div className="explainability-block">
+          <h3>
+            <ShieldCheck size={15} /> Availability and floors
+          </h3>
+          <p>
+            Active:{" "}
+            {latest?.active_signals?.map(titleCase).join(", ") || "None"}
+          </p>
+          <p>
+            Inactive:{" "}
+            {latest?.inactive_signals?.map(titleCase).join(", ") || "None"}
+          </p>
+          {call?.applied_floors?.length ? (
+            call.applied_floors.map((floor) => (
+              <div className="floor-row" key={floor.reason}>
+                <span>{titleCase(floor.reason)}</span>
+                <strong>minimum {floor.value}</strong>
+              </div>
+            ))
+          ) : (
+            <p>No policy floor applied.</p>
+          )}
+        </div>
       </div>
+
       <div className="chart-title">
-        <h3>Risk over time</h3>
+        <h3>Session risk over time</h3>
         <span>
-          <i className="legend" />
-          Rolling risk <i className="legend threshold" />
-          Alert threshold · 65
+          <i className="legend" /> Session score{" "}
+          <i className="legend threshold" /> Elevated 40 · High 70
         </span>
       </div>
       <div className="chart">
         <svg
           viewBox="0 0 710 178"
           role="img"
-          aria-label="Rolling risk across scored windows, threshold 65"
+          aria-label="Session risk across assessed windows, elevated threshold 40 and high threshold 70"
         >
-          {[0, 50, 100].map((v) => (
-            <g key={v}>
+          {[0, 50, 100].map((value) => (
+            <g key={value}>
               <line
                 x1="20"
-                y1={150 - v * 1.2}
+                y1={150 - value * 1.2}
                 x2="680"
-                y2={150 - v * 1.2}
+                y2={150 - value * 1.2}
                 className="gridline"
               />
-              <text x="685" y={154 - v * 1.2}>
-                {v}
+              <text x="685" y={154 - value * 1.2}>
+                {value}
               </text>
             </g>
           ))}
-          <line x1="20" y1="72" x2="680" y2="72" className="threshold-line" />
+          <line x1="20" y1="102" x2="680" y2="102" className="threshold-line" />
+          <line
+            x1="20"
+            y1="66"
+            x2="680"
+            y2="66"
+            className="threshold-line high"
+          />
           {history.length > 0 && (
             <>
               <polyline points={points} className="risk-line" />
-              {history.map((v, i) => (
+              {history.map((value, index) => (
                 <circle
-                  key={i}
-                  cx={20 + (i * 660) / Math.max(history.length - 1, 1)}
-                  cy={150 - v * 1.2}
+                  key={index}
+                  cx={20 + (index * 660) / Math.max(history.length - 1, 1)}
+                  cy={150 - value * 1.2}
                   r="3"
                   className="chart-point"
                 />
@@ -163,10 +208,10 @@ export default function CallDetail({ call, onStop, busy }) {
             </>
           )}
           <text x="20" y="173">
-            {history.length ? "WINDOW 1" : "AWAITING SCORED WINDOWS"}
+            {history.length ? "ASSESSED WINDOW 1" : "AWAITING ASSESSED WINDOWS"}
           </text>
           {history.length > 1 && (
-            <text x="590" y="173">
+            <text x="570" y="173">
               WINDOW {history.length}
             </text>
           )}
@@ -174,15 +219,20 @@ export default function CallDetail({ call, onStop, busy }) {
       </div>
       <div className="detail-footer">
         <span>
-          <Timer size={14} />
-          Detection latency:{" "}
+          <Timer size={14} /> Detection latency:{" "}
           <b>
             {call?.latency_ms == null
               ? "—"
               : `${call.latency_ms.toFixed(1)} ms`}
           </b>
         </span>
-        <span>EMA α 0.30 · measured per window</span>
+        <span>
+          EWMA α 0.35 · peak decay 0.98 · policy {call?.policy_version || "—"}
+        </span>
+        <span>
+          Detector {call?.model_versions?.detector || "—"} · calibrator{" "}
+          {call?.model_versions?.calibrator || "—"}
+        </span>
       </div>
     </section>
   );

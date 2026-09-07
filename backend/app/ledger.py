@@ -6,6 +6,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 def digest(previous, payload):
+    """Version 2 chain order: canonical event bytes followed by previous hash."""
+    return hashlib.sha256((payload+previous).encode()).hexdigest()
+
+def legacy_digest(previous, payload):
     return hashlib.sha256((previous+payload).encode()).hexdigest()
 
 class Ledger:
@@ -16,10 +20,13 @@ class Ledger:
             db.execute("CREATE TABLE IF NOT EXISTS ledger (id INTEGER PRIMARY KEY, previous TEXT NOT NULL, payload TEXT NOT NULL, hash TEXT NOT NULL UNIQUE)")
 
     def connect(self):
-        return sqlite3.connect(self.path, timeout=15)
+        db = sqlite3.connect(self.path, timeout=15)
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute("PRAGMA synchronous=FULL")
+        return db
 
     def append(self, event):
-        payload = json.dumps({**event, "timestamp": datetime.now(timezone.utc).isoformat()}, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        payload = json.dumps({**event, "hash_version": "payload-prev-v2", "timestamp": datetime.now(timezone.utc).isoformat()}, sort_keys=True, separators=(",", ":"), allow_nan=False)
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT hash FROM ledger ORDER BY id DESC LIMIT 1").fetchone()
@@ -38,7 +45,8 @@ class Ledger:
             rows = db.execute("SELECT id,previous,payload,hash FROM ledger ORDER BY id").fetchall()
         previous = "0"*64
         for n, (i,p,data,h) in enumerate(rows, 1):
-            if i != n or p != previous or digest(p,data) != h:
+            expected = digest(p, data) if json.loads(data).get("hash_version") == "payload-prev-v2" else legacy_digest(p, data)
+            if i != n or p != previous or expected != h:
                 return {"valid": False, "checked": n, "reason": "Chain integrity failure"}
             previous = h
             if target == h:

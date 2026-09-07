@@ -1,4 +1,6 @@
 import { ShieldAlert, ArrowUpRight, Check } from "lucide-react";
+import { bandMeta } from "./Dashboard";
+
 export default function AlertPopup({ alerts, onEscalate, busy }) {
   return (
     <section className="panel alert-panel">
@@ -13,38 +15,44 @@ export default function AlertPopup({ alerts, onEscalate, busy }) {
           <Check size={23} />
           <h3>No verification requests</h3>
           <p>
-            Sustained high risk will create an alert here. Calls are never
-            automatically blocked.
+            Elevated or high sessions will create a request here. Calls are
+            never automatically blocked.
           </p>
         </div>
       ) : (
-        alerts.map((a) => (
-          <article className="alert-item" key={a.id}>
-            <span className="eyebrow warning">SECONDARY VERIFICATION</span>
-            <h3>Suspicious voice pattern</h3>
-            <p>{a.message}</p>
-            <small>
-              Call {a.call_id.slice(0, 8)} · Risk {Math.round(a.risk_score)}/100
-            </small>
-            <button
-              className="escalate"
-              disabled={a.status === "escalated" || busy}
-              onClick={() => onEscalate(a.id)}
-            >
-              {a.status === "escalated" ? (
-                <>
-                  <Check size={15} />
-                  Escalated locally
-                </>
-              ) : (
-                <>
-                  Escalate for review
-                  <ArrowUpRight size={15} />
-                </>
-              )}
-            </button>
-          </article>
-        ))
+        alerts.map((alert) => {
+          const meta = bandMeta(alert.band);
+          return (
+            <article className="alert-item" key={alert.id}>
+              <span className={`eyebrow ${meta.className}`}>
+                {meta.glyph} {meta.label.toUpperCase()} ASSESSMENT
+              </span>
+              <h3>Additional verification required</h3>
+              <p>{alert.message}</p>
+              <small>
+                Call {alert.call_id.slice(0, 8)} · Risk{" "}
+                {Math.round(alert.risk_score)}/100
+              </small>
+              <button
+                className="escalate"
+                disabled={alert.status === "escalated" || busy}
+                onClick={() => onEscalate(alert.id)}
+              >
+                {alert.status === "escalated" ? (
+                  <>
+                    <Check size={15} />
+                    Escalated locally
+                  </>
+                ) : (
+                  <>
+                    Escalate for review
+                    <ArrowUpRight size={15} />
+                  </>
+                )}
+              </button>
+            </article>
+          );
+        })
       )}
       <div className="panel-note">
         Advisory only · No call blocking · No SMS sent

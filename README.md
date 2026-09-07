@@ -36,8 +36,8 @@ After installation, `./start.ps1` from the project root starts both services in 
 
 1. The generator supplies steady, variable-pitch, and silence WAV **test signals**. None is genuine speech or a cloned person. They demonstrate processing and alert mechanics only.
 2. Click **Run simulation**, choose `fixture-steady.wav`, leave unknown caller and ₹250,000 context, and start. The regular test signal should produce sustained high risk under the heuristic.
-3. Observe 3-second chunks, RMS energy envelope, acoustic sub-scores, rolling risk, and measured processing latency. Cold-start library compilation may make the first window much slower.
-4. After at least three scored windows and two consecutive rolling scores ≥65, inspect the verification queue. Escalate to record a local review event. No call is auto-blocked and no message is sent.
+3. Observe overlapping 3-second windows with a 1-second hop, the RMS energy envelope, active factors, session risk, and measured processing latency. Cold-start library compilation may make the first window much slower.
+4. Two of three qualifying windows move a session upward through Elevated (40–69) and High (70–100). Inspect the verification queue and escalate to record a local review event. No call is auto-blocked and no message is sent.
 5. Verify the audit chain. Run `fixture-variable.wav` with a known number and no transaction context for a different signal pattern. Run silence to verify skipped windows produce no risk score.
 6. Add consented genuine and AI-cloned `.wav` recordings to `demo_audio/`. The source list refreshes automatically. Mono/stereo, ≤96 kHz, ≤5 minutes. Filenames never determine the detection score.
 
@@ -47,17 +47,17 @@ Optional: run `./backend/generate_speech_samples.ps1` from any directory to crea
 
 | Stage | Implementation |
 |---|---|
-| Ingestion | SoundFile reads one 3-second window; SciPy resamples to mono 16 kHz |
+| Ingestion | SoundFile reads overlapping 3-second windows with a 1-second hop; SciPy resamples to mono 16 kHz |
 | Preprocessing | 80–3800 Hz band-pass, frame energy + in-band spectral flatness VAD, gentle noise gate |
 | Features | librosa MFCCs, log-mel summary, YIN pitch contour, frame-based jitter/shimmer proxies, spectral peaks, RMS envelope |
 | Detection | `SpoofClassifier.predict(chunk) -> float`; unvalidated `HeuristicClassifier` fallback |
-| Fusion | 55% spectral + 45% prosody; optional enrolled speaker match supported in fusion API; context adds at most 20 points |
-| Temporal risk | EMA α=.30; minimum 3 observations + 2 consecutive scores ≥65 for an alert |
-| Response | Callback/MFA/escalation recommendation, deduplicated per call, never auto-block |
-| Ledger | SQLite transaction-protected SHA-256 chain over canonical event JSON and previous hash |
+| Fusion | Versioned active-signal weights (AI .60, speaker .20, context .20), renormalization, confidence shrinkage, and policy floors |
+| Temporal risk | EWMA α=.35 plus decaying peak memory; 2-of-3 escalation and 5-of-6 recovery hysteresis |
+| Response | One alert per band escalation, deterministic keys, callback/MFA recommendation, never auto-block |
+| Ledger | SQLite WAL with FULL synchronous writes and a SHA-256 chain over canonical event JSON followed by the previous hash |
 | Frontend | React, Tailwind/Vite, local fonts, WebSocket result replay, polling recovery |
 
-Risk is **0–100, higher = more suspicious**. Voice Authenticity is exactly **100 − risk**, including context; neither is calibrated confidence. The REAL/SYNTHETIC chunk label is a heuristic indication only. Speaker match is `null` / not enrolled, never a fabricated measurement. Spectral peaks are explicitly not validated LPC formants; jitter/shimmer are frame proxies, not clinical measurements.
+Risk is **0–100, higher means more verification is required**. LOW is 0–39, MEDIUM is 40–69, HIGH is 70–100, and UNKNOWN has no numeric score and appears as **Not assessed**. The REAL/SYNTHETIC window label is an uncalibrated heuristic indication only. Speaker match is `null` / not enrolled, never a fabricated measurement. Spectral peaks are explicitly not validated LPC formants; jitter/shimmer are frame proxies, not clinical measurements.
 
 ## API contract
 
@@ -65,13 +65,13 @@ All paths from the build prompt are implemented:
 
 | Method | Path | Body / behavior |
 |---|---|---|
-| POST | `/api/v1/stream/start` | `{filename,label,context:{known_number,transaction_size,hour},interval:3}` → call_id |
+| POST | `/api/v1/stream/start` | `{filename,label,context:{caller_attestation,attestation_source,transaction_value,beneficiary_is_new,request_urgency,urgency_source},interval:1,simulate_detector_failure:false}` → call_id |
 | WS | `/ws/audio/{call_id}` | Replays derived chunk events, then streams live; ends with `complete` |
 | POST | `/api/v1/detect` | `{samples:[...],sample_rate:16000}`; 4,000–64,000 finite normalized float samples |
 | POST | `/api/v1/risk-score` | `{spectral_score,prosody_score,speaker_match_score:null,context:{...}}`; scores in [0,1] |
 | GET | `/api/v1/risk-score/{call_id}` | Rolling risk, history, latest derived features |
 | POST/GET | `/api/v1/alerts` | POST `{call_id}` requires sustained risk; GET lists alerts |
-| POST | `/api/v1/ledger/log` | `{call_id,event_type,risk_score}`; strict allowlist rejects raw-audio fields |
+| POST | `/api/v1/ledger/log` | `{call_id,event_type,risk_score,band,policy_version,model_versions}`; strict allowlist rejects raw-audio fields |
 | GET | `/api/v1/ledger/verify/{hash}` | Checks genesis through the supplied hash; use `all` to verify the full chain |
 
 Additional local endpoints: health, audio list, call list, stop simulation, ledger list, and alert escalation. Stop means **stop the simulator**, not block a real call. Frontend requests go through Vite's local `/api` and `/ws` proxies. Bank webhooks, shared blacklists, and SMS are deliberately outside the MVP.

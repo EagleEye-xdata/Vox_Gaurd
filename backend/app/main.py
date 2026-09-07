@@ -12,7 +12,7 @@ from .ingestion import AUDIO_DIR, chunks, resolve_audio
 from .preprocessing import preprocess
 from .features import extract
 from .detection import classifier
-from .risk_scoring import RollingRisk, fuse
+from .risk_scoring import SessionRisk, POLICY, fuse, score_window
 from .alerts import make_alert
 from .ledger import Ledger
 from .schemas import Start, AudioChunk, Scores, AlertRequest, LedgerEvent
@@ -40,7 +40,12 @@ def analyze(audio):
         processed, speech_ratio = prepared
         features = extract(processed)
         scores = classifier.score_features(features) if hasattr(classifier, "score_features") else {"spectral_score": classifier.predict(processed), "prosody_score": 0.5, "speaker_match_score": None, "model": classifier.name}
-        return {"scored": True, **scores, "features": features, "speech_ratio": speech_ratio,
+        pitch_coverage = min(1.0, len(features["pitch_hz"]) / 12)
+        confidence = round(min(0.95, max(0.35, 0.35 + 0.35 * speech_ratio + 0.25 * pitch_coverage)), 4)
+        return {"scored": True, **scores, "p_synthetic": scores["synthetic_score"],
+                "p_synthetic_raw": scores["synthetic_score"], "confidence": confidence,
+                "language": "und", "language_supported": True, "adversarial_flag": False,
+                "voiced_seconds": round(speech_ratio * 3.0, 3), "features": features, "speech_ratio": speech_ratio,
                 "latency_ms": round((time.perf_counter()-started)*1000, 2)}
     finally:
         audio.fill(0)
@@ -55,15 +60,22 @@ def get_call(call_id):
         raise HTTPException(404, "Call not found")
     return calls[call_id]
 
-def ensure_alert(call):
-    existing = next((a for a in alerts if a["call_id"] == call["call_id"]), None)
+def ensure_alert(call, alert_key=None):
+    if alert_key is None:
+        if call.get("band") not in {"MEDIUM", "HIGH"}:
+            raise HTTPException(409, "The session has not reached an elevated risk band.")
+        alert_key = f"manual:{call['call_id']}:{call['band']}:{call.get('escalation_seq', 0)}"
+    existing = next((a for a in alerts if a["id"] == alert_key), None)
     if existing:
+        existing["risk_score"] = call["risk_score"]
+        existing["updated_at"] = datetime.now(timezone.utc).isoformat()
         return existing
-    if not call.get("sustained_high_risk"):
-        raise HTTPException(409, "At least three scored windows and two consecutive high-risk windows are required.")
-    alert = make_alert(call["call_id"], call["risk_score"])
+    alert = make_alert(call["call_id"], call["risk_score"], call["band"], alert_key)
+    alert["policy_version"] = POLICY["version"]
+    alert["model_versions"] = call["model_versions"]
     alerts.append(alert)
-    ledger.append({"call_id": call["call_id"], "event_type": "alert", "risk_score": call["risk_score"]})
+    ledger.append({"call_id": call["call_id"], "event_type": "alert", "risk_score": call["risk_score"],
+                   "band": call["band"], "policy_version": POLICY["version"], "model_versions": call["model_versions"]})
     return alert
 
 async def run_call(call, path, interval):
@@ -76,12 +88,31 @@ async def run_call(call, path, interval):
             call["chunks_processed"] = index
             call["latency_ms"] = result["latency_ms"]
             if result["scored"]:
-                score = fuse(result["spectral_score"], result["prosody_score"], result["speaker_match_score"], call["context"])
-                call.update(call["rolling"].update(score))
-                call["latest"] = result
-                ledger.append({"call_id": call["call_id"], "event_type": "observation", "risk_score": call["risk_score"]})
-                if call["sustained_high_risk"]:
-                    ensure_alert(call)
+                detector_output = None if call["simulate_detector_failure"] else result
+                window = score_window(detector_output, call["context"])
+                verdict = call["rolling"].update(window)
+                call.update(verdict)
+                call["risk_score"] = verdict["session_score"]
+                call["decision"] = {"UNKNOWN": "WARN", "LOW": "ALLOW", "MEDIUM": "WARN", "HIGH": "STEP_UP"}[verdict["band"]]
+                public_result = result if detector_output is not None else {
+                    "scored": True,
+                    "latency_ms": result["latency_ms"],
+                    "features": result["features"],
+                    "speech_ratio": result["speech_ratio"],
+                }
+                call["latest"] = {**public_result, **window}
+                call["degraded"] = window["degraded"]
+                call["degraded_reasons"] = window["degraded_reasons"]
+                call["contributing_factors"] = window["contributing_factors"]
+                call["applied_floors"] = window["applied_floors"]
+                if window["window_score"] is None:
+                    call["unassessed_windows"] += 1
+                else:
+                    call["windows_scored"] += 1
+                    ledger.append({"call_id": call["call_id"], "event_type": "observation", "risk_score": call["risk_score"],
+                                   "band": call["band"], "policy_version": POLICY["version"], "model_versions": call["model_versions"]})
+                if verdict["alert_key"]:
+                    ensure_alert(call, verdict["alert_key"])
             else:
                 call["dropped_chunks"] += 1
             call["events"].append({"type": "chunk", "chunk": index, **result, "call": public(call)})
@@ -89,7 +120,8 @@ async def run_call(call, path, interval):
         if call["status"] != "stopped":
             call["status"] = "completed"
         if call["risk_score"] is not None:
-            ledger.append({"call_id": call["call_id"], "event_type": "call_completed", "risk_score": call["risk_score"]})
+            ledger.append({"call_id": call["call_id"], "event_type": "call_completed", "risk_score": call["risk_score"],
+                           "band": call["band"], "policy_version": POLICY["version"], "model_versions": call["model_versions"]})
     except Exception:
         call["status"] = "error"
         call["error"] = "Audio processing failed. Check that the WAV contains valid audio."
@@ -128,10 +160,16 @@ async def start(body: Start):
         if old:
             del calls[old]
     call_id = str(uuid4())
+    model_versions = {"detector": classifier.model_version, "calibrator": classifier.calibrator_version, "verifier": "not_enrolled"}
     call = {"call_id": call_id, "label": body.label, "filename": body.filename, "context": body.context.model_dump(),
             "status": "streaming", "started_at": datetime.now(timezone.utc).isoformat(), "risk_score": None,
-            "authenticity_score": None, "history": [], "rolling": RollingRisk(), "events": [], "chunks_processed": 0,
-            "dropped_chunks": 0, "latest": None, "latency_ms": None, "sustained_high_risk": False}
+            "authenticity_score": None, "band": "UNKNOWN", "decision": "WARN", "history": [],
+            "rolling": SessionRisk(call_id), "events": [], "chunks_processed": 0, "windows_scored": 0,
+            "unassessed_windows": 0, "dropped_chunks": 0, "latest": None, "latency_ms": None,
+            "degraded": False, "degraded_reasons": [], "contributing_factors": [], "applied_floors": [],
+            "policy_version": POLICY["version"], "model_versions": model_versions,
+            "simulate_detector_failure": body.simulate_detector_failure,
+            "band_timeline": [{"window": 0, "band": "UNKNOWN"}]}
     calls[call_id] = call
     task = asyncio.create_task(run_call(call, path, body.interval))
     tasks.add(task)
@@ -177,7 +215,8 @@ async def detect(body: AudioChunk):
 @app.post("/api/v1/risk-score")
 def risk(body: Scores):
     score = fuse(body.spectral_score, body.prosody_score, body.speaker_match_score, body.context.model_dump())
-    return {"risk_score": score, "authenticity_score": round(100-score, 2), "aggregation": "single fusion; call endpoint maintains EMA"}
+    return {"risk_score": score, "authenticity_score": round(100-score, 2), "policy_version": POLICY["version"],
+            "aggregation": "single-window compatibility endpoint; sessions use EWMA, decaying peak, and hysteresis"}
 
 @app.get("/api/v1/risk-score/{call_id}")
 def current_risk(call_id: str):
@@ -197,7 +236,9 @@ def escalate(alert_id: str):
     if alert is None:
         raise HTTPException(404, "Alert not found")
     if alert["status"] != "escalated":
-        ledger.append({"call_id": alert["call_id"], "event_type": "escalation", "risk_score": alert["risk_score"]})
+        ledger.append({"call_id": alert["call_id"], "event_type": "escalation", "risk_score": alert["risk_score"],
+                       "band": alert["band"], "policy_version": POLICY["version"],
+                       "model_versions": alert["model_versions"]})
         alert["status"] = "escalated"
     return alert
 

@@ -34,6 +34,9 @@ export default function App() {
     [label, setLabel] = useState("CFO transfer request"),
     [amount, setAmount] = useState(250000),
     [known, setKnown] = useState(false),
+    [newBeneficiary, setNewBeneficiary] = useState(true),
+    [urgency, setUrgency] = useState("high"),
+    [simulateFailure, setSimulateFailure] = useState(false),
     [notification, setNotification] = useState(null);
   const seenAlerts = useRef(new Set());
   const dialog = useRef(),
@@ -87,6 +90,7 @@ export default function App() {
       );
       if (data.type === "complete") refresh();
     };
+    s.onerror = () => setOnline(false);
     return () => s.close();
   }, [selected]);
   const call = calls.find((c) => c.call_id === selected);
@@ -108,8 +112,19 @@ export default function App() {
       const result = await api("/stream/start", {
         filename,
         label,
-        context: { known_number: known, transaction_size: Number(amount) },
-        interval: 3,
+        context: {
+          caller_attestation: known ? "KNOWN_UNVERIFIED" : "UNKNOWN",
+          attestation_source: known ? "CALLER_ID_ONLY" : "NONE",
+          transaction_value: Number(amount),
+          transaction_currency: "INR",
+          transaction_type: "wire_transfer",
+          beneficiary_is_new: newBeneficiary,
+          request_urgency: urgency,
+          urgency_source: "AGENT_ASSERTED",
+          confirmed_fraud_flags_90d: 0,
+        },
+        interval: 1,
+        simulate_detector_failure: simulateFailure,
       });
       setSelected(result.call_id);
       dialog.current.close();
@@ -272,9 +287,9 @@ export default function App() {
             </div>
           )}
           {!online && (
-            <div className="error-banner">
-              Backend unavailable. Start FastAPI on port 8000; this dashboard
-              reconnects automatically.
+            <div className="error-banner" role="status">
+              Live assessment paused — reconnecting. Start FastAPI on port 8000
+              if the local service is stopped.
             </div>
           )}
           <div className="mode-notice">
@@ -376,7 +391,7 @@ export default function App() {
                   "01",
                   "Ingest",
                   "Local WAV → mono, 16 kHz",
-                  "Three-second windows. File-based streaming only.",
+                  "Three-second windows with a one-second hop. File-based streaming only.",
                 ],
                 [
                   "02",
@@ -399,14 +414,14 @@ export default function App() {
                 [
                   "05",
                   "Aggregate",
-                  "Weighted fusion → exponential moving average",
-                  "Context adds up to 20 risk points. EMA α = 0.30. Authenticity = 100 − risk.",
+                  "Active-signal fusion → EWMA and decaying peak",
+                  "Signals are renormalized when unavailable. Floors are applied last. EWMA α = 0.35.",
                 ],
                 [
                   "06",
                   "Verify & record",
-                  "Sustained risk ≥ 65 → secondary verification",
-                  "Minimum three scored windows and two consecutive high windows. SHA-256 local ledger.",
+                  "Elevated 40 · High 70 → secondary verification",
+                  "Two-of-three escalation, five-of-six recovery, and deterministic alert keys. SHA-256 local ledger.",
                 ],
               ].map(([n, t, s, d]) => (
                 <article className="pipeline-step" key={n}>
@@ -433,7 +448,7 @@ export default function App() {
                   context. Built-in fixtures are test tones, not speech.
                 </li>
                 <li>
-                  Watch the energy envelope, sub-scores, rolling risk, and
+                  Watch the energy envelope, active factors, session risk, and
                   actual processing latency update.
                 </li>
                 <li>
@@ -538,7 +553,34 @@ export default function App() {
               checked={known}
               onChange={(e) => setKnown(e.target.checked)}
             />
-            Known caller number
+            Caller ID matches a known number (unverified)
+          </label>
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={newBeneficiary}
+              onChange={(e) => setNewBeneficiary(e.target.checked)}
+            />
+            New beneficiary
+          </label>
+          <label>
+            Request urgency
+            <select
+              value={urgency}
+              onChange={(e) => setUrgency(e.target.value)}
+            >
+              <option value="low">Low</option>
+              <option value="normal">Normal</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={simulateFailure}
+              onChange={(e) => setSimulateFailure(e.target.checked)}
+            />
+            Simulate detector outage (fail-safe demo)
           </label>
           <p className="helper">
             Context changes the risk score. It does not change acoustic
@@ -558,7 +600,7 @@ export default function App() {
       {notification && (
         <aside className="alert-toast" role="alert">
           <div className="toast-heading">
-            <strong>Suspicious voice pattern detected</strong>
+            <strong>Additional verification required</strong>
             <button
               className="icon-button"
               aria-label="Dismiss notification"
@@ -568,7 +610,7 @@ export default function App() {
             </button>
           </div>
           <p>
-            Recommend callback or MFA before proceeding. The call has not been
+            Use a callback or MFA before proceeding. The call has not been
             blocked.
           </p>
           <button
