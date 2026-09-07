@@ -195,7 +195,9 @@ spoof-detection performance has been measured at all**.
 | Docker / WSL2 | Docker 29.5.3 · WSL2 Ubuntu (stopped) | Asterisk-in-Docker path viable. |
 | ffmpeg | 8.1.1 | G.711 / Opus / AMR-NB codec laundering (T-5.5). |
 | git-lfs | 3.7.1 | HF dataset pulls. |
-| Missing | `datasets`, `peft`, `bitsandbytes`, `accelerate` | Install before the training track. |
+| Training stack | ✅ Installed 2026-09-07: transformers 4.57.6, datasets 5.0.1, peft 0.20.0, accelerate 1.14.0, bitsandbytes 0.50.2 | — |
+| QLoRA viability | ✅ **Verified end to end**: bnb `Linear4bit` fp16 forward on the 4060, `Qwen2AudioForConditionalGeneration` present, NF4 + double quant accepted, `peft.LoraConfig` OK. 7.44 GB VRAM free. | **D-1 is buildable here.** Budget ≈6.5–7 GB of 7.44 → batch size 1 + gradient checkpointing mandatory; no heavy desktop GPU use during a run. |
+| TensorFlow | ⚠️ Installed and partially broken (protobuf `MessageFactory` errors) | Noise only. Prefix training commands with `USE_TF=0 TRANSFORMERS_NO_TF=1`. |
 
 ---
 

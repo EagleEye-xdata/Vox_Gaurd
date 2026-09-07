@@ -22,7 +22,11 @@ Git Bash · Repo on `F:\vox_gaurd`
 | ffmpeg | **8.1.1** (winget Gyan build) | Codec laundering for T-5.5: G.711, Opus, AMR-NB. Also 8 kHz narrowband channel augmentation for D-2. |
 | git-lfs | **3.7.1** | Required for Hugging Face dataset pulls. |
 | Network egress | Available (web search + HF reachable) | Dataset download viable; mirror early per `12` §0. |
-| `datasets` / `peft` / `bitsandbytes` / `accelerate` | ❌ **Not installed** | Install before the training track (next action 4). |
+| Training stack | ✅ transformers 4.57.6 · datasets 5.0.1 · peft 0.20.0 · accelerate 1.14.0 · **bitsandbytes 0.50.2** | Installed 2026-09-07. |
+| bnb 4-bit CUDA backend | ✅ **Verified**: `Linear4bit` fp16 forward pass on the 4060 succeeds | The risky part on Windows. QLoRA is viable here. |
+| `Qwen2AudioForConditionalGeneration` | ✅ Available in transformers 4.57.6; NF4 + double-quant config accepted; `peft.LoraConfig` OK | D-1 is buildable on this box. |
+| VRAM headroom | **7.44 GB free of 8.59 GB** | Qwen2-Audio-7B in NF4 is ~4.5 GB weights + ~0.2 GB LoRA + ~1.5–2.5 GB activations ≈ **6.5–7 GB**. Feasible but tight: batch size 1 and gradient checkpointing are **mandatory**, and heavy desktop GPU use during a run will OOM it. |
+| TensorFlow interference | ⚠️ TF is installed and partially broken (protobuf `MessageFactory` errors on import) | Harmless but noisy. Set `USE_TF=0 TRANSFORMERS_NO_TF=1` for all training/inference commands. |
 
 ---
 
