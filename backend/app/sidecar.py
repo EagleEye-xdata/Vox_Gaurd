@@ -32,9 +32,9 @@ from .ingestion import AUDIO_DIR, chunks, resolve_audio
 from .preprocessing import SAMPLE_RATE, preprocess
 from .speaker_verification import MODEL_VERSION as VERIFIER_VERSION, verifier
 
-# A demo box streams a handful of calls at once. The cap exists so a client that forgets to close
+# A demo box streams multiple calls at once. The cap exists so a client that forgets to close
 # streams cannot pin an unbounded number of open file handles and generators.
-MAX_OPEN_STREAMS = 16
+MAX_OPEN_STREAMS = 32
 
 
 class StrictModel(BaseModel):

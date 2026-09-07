@@ -26,7 +26,7 @@ import (
 )
 
 // MaxConcurrentStreams bounds simultaneous demo calls.
-const MaxConcurrentStreams = 3
+const MaxConcurrentStreams = 20
 
 // MaxRetainedCalls bounds the in-memory call history.
 const MaxRetainedCalls = 100
