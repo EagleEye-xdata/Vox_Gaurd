@@ -22,6 +22,7 @@ const SCAM_PERSONAS = [
   {
     id: "bank-otp",
     name: "Bank Security Fraud Phishing",
+    callerType: "Deepfake AI Voice (Clone)",
     callerId: "+91 98210 44819 (Spoofed HDFC Desk)",
     initialPrompt: "Hello, main HDFC Fraud Prevention Department se Rohit bol raha hoon. Aapke account se abhi ₹49,999 ka international transaction trigger hua hai. Kya ye aapne kiya hai?",
     responses: [
@@ -51,6 +52,7 @@ const SCAM_PERSONAS = [
   {
     id: "cfo-wire",
     name: "CFO Emergency Fund Transfer",
+    callerType: "Cloned Executive Voice",
     callerId: "+91 98111 02931 (Executive Office)",
     initialPrompt: "Hi, this is Rajesh Sharma. I am in an urgent client meeting right now. We need to release the ₹2,50,000 vendor payment immediately. Has the wire been processed?",
     responses: [
@@ -70,6 +72,30 @@ const SCAM_PERSONAS = [
       "Which vendor account is this for?",
       "I will verify with finance controller first."
     ]
+  },
+  {
+    id: "family-emergency",
+    name: "Family Emergency Extortion",
+    callerType: "Deepfake AI Voice Clone",
+    callerId: "+91 97182 33410 (Spoofed Private)",
+    initialPrompt: "Papa, main bahut badi musibat mein hoon! Police ne accident case mein detain kar liya hai. Lawyer ko ₹50,000 turant transfer karne hain, please help karo!",
+    responses: [
+      {
+        trigger: "kaha",
+        aiReply: "Main Sector 18 police chowki ke paas hoon. Inspector phone nahi dene de rahe, turant paise bhejo papa!",
+        urgency: "CRITICAL",
+      },
+      {
+        trigger: "default",
+        aiReply: "Papa please jaldi UPI karo, warna ye mujhe lockup me daal denge!",
+        urgency: "CRITICAL",
+      }
+    ],
+    quickReplies: [
+      "Tum kahan ho? Main abhi police station aata hoon.",
+      "Pehle inspector se baat karao meri!",
+      "Main tumhare dost ko phone karke verify karta hoon."
+    ]
   }
 ];
 
@@ -84,6 +110,7 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
   const [riskScore, setRiskScore] = useState(25);
   const [verdict, setVerdict] = useState("ASSESSING");
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
+  const [isListeningSpeech, setIsListeningSpeech] = useState(false);
   const [turnCount, setTurnCount] = useState(0);
 
   const micCanvasRef = useRef(null);
@@ -91,6 +118,7 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
   const analyserRef = useRef(null);
   const streamRef = useRef(null);
   const animationFrameRef = useRef(null);
+  const recognitionRef = useRef(null);
 
   // Initialize Audio & Gateway Live Stream Session
   useEffect(() => {
@@ -102,16 +130,16 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
       { sender: "ai", text: selectedPersona.initialPrompt, time: new Date().toLocaleTimeString() }
     ]);
     setRiskScore(45);
-    setVerdict("MONITORING");
+    setVerdict("MONITORING (Evaluating Inbound Channel)");
 
-    // Speak initial AI message aloud
+    // Speak initial Deepfake AI message aloud
     speakAi(selectedPersona.initialPrompt);
 
     // Start Live Stream in VoxGuard Gateway
     let isCancelled = false;
     api("/stream/start", {
       filename: "fixture-steady.wav",
-      label: `2-Way Live Call: ${selectedPersona.name}`,
+      label: `2-Way Call: Human vs ${selectedPersona.name}`,
       amount: 250000,
       known_beneficiary: false,
       new_beneficiary: true,
@@ -145,9 +173,43 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
         .catch((err) => console.log("Mic permission optional/denied:", err));
     }
 
+    // Setup Speech Recognition for Natural Human Speech Input
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      try {
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = false;
+        recognition.lang = "en-IN";
+
+        recognition.onresult = (event) => {
+          const lastResult = event.results[event.results.length - 1];
+          if (lastResult.isFinal) {
+            const transcript = lastResult[0].transcript.trim();
+            if (transcript) {
+              handleUserReply(transcript);
+            }
+          }
+        };
+
+        recognition.onerror = (e) => {
+          console.log("Speech recognition notice:", e.error);
+        };
+
+        recognition.start();
+        recognitionRef.current = recognition;
+        setIsListeningSpeech(true);
+      } catch (err) {
+        console.warn("Speech recognition init:", err);
+      }
+    }
+
     return () => {
       isCancelled = true;
       if (window.speechSynthesis) window.speechSynthesis.cancel();
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (_) {}
+      }
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
       }
@@ -186,14 +248,14 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
     render();
   };
 
-  // AI Speech Synthesis
+  // Deepfake AI Speech Synthesis (simulates synthesized voice cadence)
   const speakAi = (text) => {
     if (!window.speechSynthesis || !isSpeakerOn || callStatus === "blocked") return;
     window.speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.02;
-    utterance.pitch = 0.95;
+    utterance.rate = 1.04;
+    utterance.pitch = 0.92;
     
     const voices = window.speechSynthesis.getVoices();
     const hindiOrIndianVoice = voices.find((v) =>
@@ -218,6 +280,9 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
     setRiskScore(96);
     setVerdict("REJECT_AND_BLOCK");
     if (window.speechSynthesis) window.speechSynthesis.cancel();
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (_) {}
+    }
     if (activeCallId) {
       api(`/stream/${activeCallId}/stop`, {}).catch(() => {});
       api(`/ledger/log`, {
@@ -228,14 +293,15 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
           risk_score: 96,
           action: "INBOUND_NUMBER_BLACKLISTED_AND_ACCOUNT_FROZEN",
           caller_id: selectedPersona.callerId,
+          detector: "AASIST-L Neural Model",
         }
       }).catch(() => {});
     }
   };
 
-  // Handle User Message / Reply
+  // Handle User Message / Reply (Human Side)
   const handleUserReply = (userText) => {
-    if (!userText.trim() || callStatus !== "connected") return;
+    if (!userText || !userText.trim() || callStatus !== "connected") return;
 
     const newMsgs = [
       ...messages,
@@ -256,10 +322,10 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
         ]);
         speakAi(escalationReply);
         
-        // Auto block on critical risk escalation after 2 seconds
+        // Auto block on critical risk escalation after 2.2 seconds
         setTimeout(() => {
           triggerBlockAction("AUTOMATED_INTERVENTION_CRITICAL_SYNTHETIC_FRAUD");
-        }, 2500);
+        }, 2200);
       }, 500);
       return;
     }
@@ -278,19 +344,22 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
       ]);
       speakAi(aiReplyText);
       setRiskScore(88);
-      setVerdict("STEP_UP (Elevated Risk)");
+      setVerdict("STEP_UP (Elevated Synthetic Risk)");
     }, 600);
   };
 
   const handleHangup = () => {
     setCallStatus("ended");
     if (window.speechSynthesis) window.speechSynthesis.cancel();
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (_) {}
+    }
     if (activeCallId) {
       api(`/stream/${activeCallId}/stop`, {}).catch(() => {});
     }
     setTimeout(() => {
       onClose?.();
-    }, 400);
+    }, 300);
   };
 
   if (!isOpen) return null;
@@ -346,6 +415,46 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
             </div>
           )}
 
+          {/* Persona Switcher Bar */}
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            background: "rgba(255, 255, 255, 0.02)",
+            padding: "8px 12px",
+            borderRadius: "8px",
+            border: "1px solid rgba(255, 255, 255, 0.05)",
+            fontSize: "12px",
+            gap: 8,
+          }}>
+            <span style={{ color: "#94a3b8", display: "flex", alignItems: "center", gap: 6 }}>
+              <Bot size={14} color="#818cf8" /> Deepfake Scenario:
+            </span>
+            <select
+              value={selectedPersona.id}
+              onChange={(e) => {
+                const found = SCAM_PERSONAS.find((p) => p.id === e.target.value);
+                if (found) setSelectedPersona(found);
+              }}
+              style={{
+                background: "#1e293b",
+                color: "#e2e8f0",
+                border: "1px solid rgba(255, 255, 255, 0.15)",
+                borderRadius: "6px",
+                padding: "4px 8px",
+                fontSize: "12px",
+                cursor: "pointer",
+                outline: "none",
+              }}
+            >
+              {SCAM_PERSONAS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.callerType})
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Caller Identity Card */}
           <div className="twoway-caller-card">
             <div className="twoway-caller-info">
@@ -355,8 +464,20 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
                 {callStatus === "blocked" ? <Ban size={22} /> : <Bot size={22} />}
               </div>
               <div>
-                <strong style={{ fontSize: 14 }}>{selectedPersona.name}</strong>
-                <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <strong style={{ fontSize: 14 }}>{selectedPersona.name}</strong>
+                  <span style={{
+                    fontSize: "10px",
+                    background: "rgba(239, 68, 68, 0.18)",
+                    color: "#f87171",
+                    padding: "2px 6px",
+                    borderRadius: "4px",
+                    border: "1px solid rgba(239, 68, 68, 0.3)"
+                  }}>
+                    {selectedPersona.callerType}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
                   {selectedPersona.callerId}
                 </div>
               </div>
@@ -378,11 +499,11 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
             <div className="visualizer-box">
               <div className="visualizer-header">
                 <span>
-                  <User size={13} style={{ display: "inline", marginRight: 4 }} />
-                  You (Microphone)
+                  <User size={13} style={{ display: "inline", marginRight: 4, color: "#34d399" }} />
+                  You (Human Voice)
                 </span>
-                <span style={{ color: isMuted || callStatus === "blocked" ? "#f87171" : "#34d399" }}>
-                  {callStatus === "blocked" ? "Disconnected" : isMuted ? "Muted" : "Active"}
+                <span style={{ color: isMuted || callStatus === "blocked" ? "#f87171" : "#34d399", fontSize: 11 }}>
+                  {callStatus === "blocked" ? "Disconnected" : isMuted ? "Muted" : "● Genuine Acoustic"}
                 </span>
               </div>
               <canvas ref={micCanvasRef} className="visualizer-canvas" width={220} height={36} />
@@ -392,11 +513,11 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
             <div className="visualizer-box">
               <div className="visualizer-header">
                 <span>
-                  <Bot size={13} style={{ display: "inline", marginRight: 4 }} />
-                  AI Voice Stream
+                  <Bot size={13} style={{ display: "inline", marginRight: 4, color: "#f87171" }} />
+                  Inbound (Deepfake AI Voice)
                 </span>
-                <span style={{ color: callStatus === "blocked" ? "#ef4444" : isAiSpeaking ? "#818cf8" : "#94a3b8" }}>
-                  {callStatus === "blocked" ? "Terminated (Blocked)" : isAiSpeaking ? "Speaking (Deepfake Cues)" : "Listening"}
+                <span style={{ color: callStatus === "blocked" ? "#ef4444" : isAiSpeaking ? "#f87171" : "#94a3b8", fontSize: 11 }}>
+                  {callStatus === "blocked" ? "Terminated (Blocked)" : isAiSpeaking ? "● Synthetic Artifacts Detected" : "Idle"}
                 </span>
               </div>
               <div style={{
