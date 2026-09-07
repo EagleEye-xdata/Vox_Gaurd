@@ -41,6 +41,8 @@ After installation, `./start.ps1` from the project root starts both services in 
 5. Verify the audit chain. Run `fixture-variable.wav` with a known number and no transaction context for a different signal pattern. Run silence to verify skipped windows produce no risk score.
 6. Add consented genuine and AI-cloned `.wav` recordings to `demo_audio/`. The source list refreshes automatically. Mono/stereo, ≤96 kHz, ≤5 minutes. Filenames never determine the detection score.
 
+Optional: run `./backend/generate_speech_samples.ps1` from any directory to create three Windows TTS scenario recordings. Every generated filename begins with `tts-`; all are synthetic test material and must not be presented as genuine or cloned-human ground truth.
+
 ## Architecture and implementation
 
 | Stage | Implementation |

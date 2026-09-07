@@ -83,3 +83,13 @@ def test_api_and_stream(tmp_path, monkeypatch):
         assert client.post(f"/api/v1/alerts/{alerts[0]['id']}/escalate",json={}).json()['status']=='escalated'
         assert client.get('/api/v1/ledger/verify/all').json()['valid']
         assert not any('features' in e or 'samples' in e for e in client.get('/api/v1/ledger').json())
+
+def test_generated_tts_samples_are_marked_as_fixtures(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app import main
+    monkeypatch.setattr(main, 'AUDIO_DIR', tmp_path)
+    sample = tmp_path / 'tts-scenario.wav'
+    sample.touch()
+    with TestClient(main.app) as client:
+        item = next(row for row in client.get('/api/v1/audio').json() if row['filename'] == sample.name)
+        assert item['fixture'] is True

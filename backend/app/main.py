@@ -103,7 +103,13 @@ def health():
 
 @app.get("/api/v1/audio")
 def audio_files():
-    return [{"filename": p.name, "fixture": p.name.startswith("fixture-")} for p in sorted(AUDIO_DIR.glob("*.wav"))]
+    return [
+        {
+            "filename": p.name,
+            "fixture": p.name.startswith(("fixture-", "tts-")),
+        }
+        for p in sorted(AUDIO_DIR.glob("*.wav"))
+    ]
 
 @app.get("/api/v1/calls")
 def list_calls():
