@@ -483,7 +483,7 @@ export default function App() {
 
           {page === "ledger" && (
             <LedgerPanel
-              ledger={ledger}
+              entries={ledger}
               onVerify={verify}
               verification={verification}
               verifying={verifying}

@@ -1,0 +1,1 @@
+"""Asterisk AudioSocket telephony adapter."""

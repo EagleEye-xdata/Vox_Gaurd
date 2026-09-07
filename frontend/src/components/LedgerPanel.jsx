@@ -1,6 +1,6 @@
 import { Link2, ShieldCheck } from "lucide-react";
 export default function LedgerPanel({
-  entries,
+  entries = [],
   onVerify,
   verification,
   busy,
