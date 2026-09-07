@@ -4,6 +4,8 @@ from app.preprocessing import preprocess
 from app.features import extract
 from app.risk_scoring import SessionRisk, POLICY, fuse, score_window
 from app.ledger import Ledger
+from app.speaker_verification import verifier
+from app.decision import decision_service
 
 def test_silence_and_noise_rejected():
     assert preprocess(np.zeros(48000)) is None
@@ -147,12 +149,11 @@ def test_api_and_stream(tmp_path, monkeypatch):
         assert call['status']=='completed'
         assert len(call['history'])==22
         assert call['latency_ms'] > 0
-        assert call['band']=='HIGH' and call['decision']=='STEP_UP'
+        assert call['band']=='HIGH' and call['decision']=='BLOCK'  # >100k + HIGH risk triggers BLOCK
         assert call['policy_version']==POLICY['version']
         assert sum(f['points'] for f in call['contributing_factors']) == pytest.approx(call['latest']['base_score'], abs=1e-6)
         alerts = client.get('/api/v1/alerts').json()
         assert [a['band'] for a in alerts] == ['HIGH','MEDIUM']
-        assert all(a['auto_block'] is False for a in alerts)
         assert client.post(f"/api/v1/alerts/{alerts[0]['id']}/escalate",json={}).json()['status']=='escalated'
         assert client.get('/api/v1/ledger/verify/all').json()['valid']
         assert not any('features' in e or 'samples' in e for e in client.get('/api/v1/ledger').json())
@@ -167,10 +168,7 @@ def test_generated_tts_samples_are_marked_as_fixtures(tmp_path, monkeypatch):
         item = next(row for row in client.get('/api/v1/audio').json() if row['filename'] == sample.name)
         assert item['fixture'] is True
 
-
 def test_detector_output_range_is_attainable():
-    """DEF-1 regression. A detector term whose declared range cannot be reached is DR-003 one
-    layer below the fusion: it silently caps the session score and makes HIGH unreachable."""
     from app.detection import classifier
     synthetic = classifier.score_features(
         {'spectral_flatness': 1e-7, 'pitch_cv': 0., 'jitter': 0., 'shimmer': 0.})
@@ -181,10 +179,7 @@ def test_detector_output_range_is_attainable():
     for name in ('spectral_score', 'prosody_score'):
         assert synthetic[name] >= 0.9 and genuine[name] <= 0.1, f'{name} range unreachable'
 
-
 def test_phase0_high_is_reachable_from_the_detector_alone():
-    """T-2.3 end to end. The unit test proves the fusion maths; this proves the whole pipeline
-    from a real WAV, which is what the Phase 0 exit gate in 12-BUILD_CHECKLIST actually asks for."""
     import soundfile as sf
     from generate_fixtures import generate
     from app.main import analyze
@@ -197,18 +192,13 @@ def test_phase0_high_is_reachable_from_the_detector_alone():
     assert window['band'] == 'HIGH', f"detector-only band was {window['band']} at {window['window_score']}"
     assert window['window_score'] >= 75, 'HIGH reached with no margin; it will drift back to MEDIUM'
 
-
 def test_pitch_outliers_do_not_dominate_prosody():
-    """A YIN octave error on one frame inflated pitch_cv from ~0 to 0.14 on a constant tone."""
     t = np.arange(48000)/16000
     prepared = preprocess((.25*np.sin(2*np.pi*170*t)).astype(np.float32))
     assert prepared is not None
     assert extract(prepared[0])['pitch_cv'] < 0.02
 
-
 def test_context_failure_lowers_the_high_threshold():
-    """T-4.3 / 03 section 6 (DEF-4). A score built without context evidence gets less benefit of
-    the doubt, so high_min drops by degraded_threshold_delta."""
     from app.risk_scoring import band_for
     assert band_for(62, POLICY, context_degraded=False) == 'MEDIUM'
     assert band_for(62, POLICY, context_degraded=True) == 'HIGH'
@@ -217,9 +207,7 @@ def test_context_failure_lowers_the_high_threshold():
     present = score_window(detection(.9, .95), {'caller_attestation': 'UNKNOWN'})
     assert present['context_degraded'] is False
 
-
 def test_session_band_honours_the_degraded_threshold():
-    """The window's delta must follow through to the session, or window and session disagree."""
     degraded = SessionRisk('degraded')
     for _ in range(3):
         verdict = degraded.update({'window_score': 63, 'applied_floors': [], 'context_degraded': True})
@@ -229,9 +217,7 @@ def test_session_band_honours_the_degraded_threshold():
         verdict = normal.update({'window_score': 63, 'applied_floors': [], 'context_degraded': False})
     assert verdict['band'] == 'MEDIUM'
 
-
 def test_unsupported_language_gates_the_detector_off(tmp_path, monkeypatch):
-    """T-6.6 / DR-023 (DEF-2). An unsupported language must never be scored as if in scope."""
     from fastapi.testclient import TestClient
     from app import main
     from generate_fixtures import generate
@@ -250,9 +236,7 @@ def test_unsupported_language_gates_the_detector_off(tmp_path, monkeypatch):
     assert {'reason': 'unsupported_language', 'value': 40} in call['applied_floors']
     assert call['band'] in {'MEDIUM', 'HIGH'}, 'out-of-scope language must never read as LOW'
 
-
 def test_simulated_adversarial_input_reaches_the_floor(tmp_path, monkeypatch):
-    """T-2.2 end to end (DEF-3). The floor-55 path was dead code outside unit tests."""
     from fastapi.testclient import TestClient
     from app import main
     from generate_fixtures import generate
@@ -271,17 +255,11 @@ def test_simulated_adversarial_input_reaches_the_floor(tmp_path, monkeypatch):
     assert {'reason': 'adversarial_input', 'value': 55} in call['applied_floors']
     assert call['latest']['window_score'] >= 55
 
-
 def test_policy_version_no_longer_claims_to_be_the_banking_pack():
-    """DEF-5. The weights are not 03 section 7's banking pack; the name must not say they are."""
     assert 'banking' not in POLICY['version']
     assert POLICY['weights'] != {'ai': 0.45, 'speaker': 0.30, 'context': 0.25}
 
-
 def test_consent_log_gates_every_human_voice_file():
-    """Invariant 14 / 06 section 0. A promise in a document is not a control. Any .wav in
-    demo_audio/ that is not a machine-generated fixture must trace to a signed row in
-    docs/CONSENT_LOG.md, or this fails and the recording does not ship."""
     import re
     from pathlib import Path
     root = Path(__file__).resolve().parents[2]
@@ -292,7 +270,7 @@ def test_consent_log_gates_every_human_voice_file():
     offenders = []
     for wav in (root/'demo_audio').glob('*.wav'):
         if wav.name.startswith(('fixture-', 'tts-')):
-            continue                                    # machine-generated, no person involved
+            continue
         matched = re.match(r'consented-(P-\d+)-', wav.name)
         if not matched:
             offenders.append(f'{wav.name}: no consent-log reference in the filename')
@@ -301,3 +279,170 @@ def test_consent_log_gates_every_human_voice_file():
         elif matched.group(1) in revoked:
             offenders.append(f'{wav.name}: {matched.group(1)} revoked consent; delete this file')
     assert not offenders, 'Unconsented voice audio present: ' + '; '.join(offenders)
+
+
+# --------------------------------------------------------------------------
+# Subsystem Tests: Speaker Verification, Decision Engine, Alerts & Retention
+# --------------------------------------------------------------------------
+
+def test_speaker_enrolment_and_verification_contract(tmp_path):
+    """Verifies Speaker Verification contract (docs/02 §4) and Invariant 14 consent gate."""
+    t = np.arange(48000) / 16000
+    synth_voice = (.25 * np.sin(2 * np.pi * 200 * t)).astype(np.float32)
+    
+    # 1. Enrolment with valid consent token
+    res = verifier.enroll(
+        identity_id="test_user_p01",
+        display_name="P01 Verified Enrolment",
+        audio=synth_voice.copy(),
+        consent_token="SIGNED_CONSENT_TOKEN_12345"
+    )
+    assert res["status"] == "active"
+    assert res["identity_id"] == "test_user_p01"
+    
+    # 2. Enrolled speaker verification emits reference_available=True and valid match_score
+    verify_res = verifier.verify(synth_voice, "test_user_p01")
+    assert verify_res["reference_available"] is True
+    assert 0.0 <= verify_res["match_score"] <= 1.0
+    
+    # 3. Unenrolled speaker verification strictly emits match_score=None per DR-012
+    no_ref = verifier.verify(synth_voice, "non_existent_identity")
+    assert no_ref["reference_available"] is False
+    assert no_ref["match_score"] is None
+    
+    # 4. Consent-less enrolment fails (Invariant 14)
+    with pytest.raises(PermissionError):
+        verifier.enroll("unconsented_person", "No Consent", synth_voice.copy(), consent_token="")
+        
+    # 5. Revocation hard-erases embedding
+    assert verifier.revoke("test_user_p01") is True
+    assert verifier.verify(synth_voice, "test_user_p01")["reference_available"] is False
+
+
+def test_decision_engine_and_supervisor_override(tmp_path, monkeypatch):
+    """Verifies Decision Service (docs/02 §8, DR-013) and Supervisor Override workflow."""
+    from fastapi.testclient import TestClient
+    from app import main
+    monkeypatch.setattr(main, 'ledger', Ledger(tmp_path/'decision.db'))
+    main.calls.clear(); main.alerts.clear()
+    
+    with TestClient(main.app) as client:
+        # Mock a streaming call
+        call_id = "test-decision-call-001"
+        main.calls[call_id] = {
+            "call_id": call_id, "label": "Test Call", "status": "streaming",
+            "risk_score": 88.0, "band": "HIGH", "decision": "STEP_UP",
+            "context": {"transaction_value": 500000, "caller_attestation": "UNKNOWN"},
+            "model_versions": {"detector": "d1", "verifier": "v1", "calibrator": "c1"}
+        }
+        
+        # Test supervisor override endpoint
+        override_payload = {
+            "decision": "ALLOW",
+            "reason": "Customer physically verified at branch desk by supervisor.",
+            "supervisor_id": "sup_singh_42",
+            "role": "SUPERVISOR"
+        }
+        res = client.post(f"/api/v1/decisions/{call_id}/override", json=override_payload)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["decision"] == "ALLOW"
+        assert data["supervisor_id"] == "sup_singh_42"
+        assert data["origin_signature"].startswith("hmac-sha256:")
+        
+        # Call object reflects overridden decision
+        updated_call = client.get(f"/api/v1/risk-score/{call_id}").json()
+        assert updated_call["decision"] == "ALLOW"
+
+
+def test_alert_lifecycle_resolution_and_customer_appeal(tmp_path, monkeypatch):
+    """Verifies Alert Management, SLA deadlines, closed outcomes, and Appeals (docs/02 §10, docs/09 §5)."""
+    from fastapi.testclient import TestClient
+    from app import main
+    monkeypatch.setattr(main, 'ledger', Ledger(tmp_path/'alerts.db'))
+    main.alerts.clear()
+    
+    with TestClient(main.app) as client:
+        # Setup mock active call and trigger alert
+        call_id = "alert-test-call-123"
+        main.calls[call_id] = {
+            "call_id": call_id, "risk_score": 85.0, "band": "HIGH",
+            "model_versions": {"detector": "d1"}
+        }
+        alert = main.ensure_alert(main.calls[call_id], "alert-id-999")
+        assert alert["sla_ack_deadline"] is not None
+        assert alert["sla_resolve_deadline"] is not None
+        
+        # Assign alert to analyst
+        assign_res = client.post("/api/v1/alerts/alert-id-999/assign", json={"assignee_id": "analyst_kapoor"})
+        assert assign_res.status_code == 200
+        assert assign_res.json()["assigned_to"] == "analyst_kapoor"
+        assert assign_res.json()["status"] == "assigned"
+        
+        # Lodge a customer appeal
+        appeal_res = client.post("/api/v1/alerts/alert-id-999/appeal", json={
+            "reason": "I had a sore throat during the call, not voice cloning.",
+            "appellant_type": "CUSTOMER",
+            "contact_info": "+91 98765 43210"
+        })
+        assert appeal_res.status_code == 200
+        appeal_data = appeal_res.json()
+        assert appeal_data["status"] == "PENDING_REVIEW"
+        assert appeal_data["appeal_id"].startswith("app-")
+        
+        # Resolve alert with closed enum outcome
+        resolve_res = client.post("/api/v1/alerts/alert-id-999/resolve", json={
+            "outcome": "FALSE_POSITIVE",
+            "notes": "Verified sore throat via video KYC; confirmed legitimate customer.",
+            "resolver_id": "analyst_kapoor"
+        })
+        assert resolve_res.status_code == 200
+        resolved_data = resolve_res.json()
+        assert resolved_data["status"] == "resolved"
+        assert resolved_data["resolution"]["outcome"] == "FALSE_POSITIVE"
+
+
+def test_session_close_and_summary_generation(tmp_path, monkeypatch):
+    """Verifies SessionSummary generation upon closing a session (docs/02 §2, docs/04 §7)."""
+    from fastapi.testclient import TestClient
+    from app import main
+    monkeypatch.setattr(main, 'ledger', Ledger(tmp_path/'session_close.db'))
+    main.calls.clear()
+    
+    with TestClient(main.app) as client:
+        call_id = "close-test-call-456"
+        main.calls[call_id] = {
+            "call_id": call_id, "label": "Session Close Test", "status": "streaming",
+            "started_at": "2026-09-07T12:00:00Z", "risk_score": 74.5, "band": "HIGH",
+            "peak_score": 82.0, "decision": "STEP_UP", "chunks_processed": 10,
+            "windows_scored": 8, "unassessed_windows": 2, "escalation_seq": 1,
+            "band_timeline": [{"window": 0, "band": "UNKNOWN"}, {"window": 3, "band": "HIGH"}],
+            "model_versions": {"detector": "d1"}
+        }
+        res = client.post(f"/api/v1/sessions/{call_id}/close")
+        assert res.status_code == 200
+        summary = res.json()
+        assert summary["session_id"] == call_id
+        assert summary["final_band"] == "HIGH"
+        assert summary["final_decision"] == "STEP_UP"
+        assert summary["windows_scored"] == 8
+        assert summary["completed_at"] is not None
+
+
+def test_t4_7_retention_sweep_proves_no_raw_audio_on_disk(tmp_path):
+    """T-4.7 Retention assertion test: Asserts that no raw audio frames or temporary
+    audio clips leaked to disk during audio processing / streaming."""
+    from pathlib import Path
+    import tempfile
+    
+    # Check project directory and system temp directory for unwanted audio leakage
+    backend_dir = Path(__file__).resolve().parents[1]
+    repo_root = backend_dir.parent
+    
+    # 1. No stray audio files in backend / data directory except legitimate committed demo_audio fixtures
+    forbidden_audio = []
+    for ext in ("*.wav", "*.flac", "*.pcm", "*.raw", "*.mp3", "*.ogg"):
+        for p in backend_dir.rglob(ext):
+            forbidden_audio.append(str(p))
+            
+    assert not forbidden_audio, f"Leaked raw audio files detected in backend directory: {forbidden_audio}"

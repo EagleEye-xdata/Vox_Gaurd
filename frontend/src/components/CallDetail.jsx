@@ -1,14 +1,36 @@
-import { AudioLines, Activity, Timer, Square, ShieldCheck } from "lucide-react";
+import { AudioLines, Activity, Timer, Square, ShieldCheck, Gavel, UserCheck, FileText, CheckCircle2, AlertTriangle, ShieldX } from "lucide-react";
 import { bandMeta } from "./Dashboard";
 
 const titleCase = (value = "") =>
   value.replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
-export default function CallDetail({ call, onStop, busy }) {
+const decisionMeta = (decision = "WARN") => {
+  switch (decision) {
+    case "ALLOW":
+      return { label: "ALLOW", icon: CheckCircle2, className: "band-low", desc: "Routine processing permitted" };
+    case "WARN":
+      return { label: "WARN", icon: AlertTriangle, className: "band-medium", desc: "Caution: proceed with agent verification" };
+    case "STEP_UP":
+      return { label: "STEP_UP", icon: ShieldCheck, className: "band-high", desc: "Multi-factor verification required" };
+    case "ESCALATE":
+      return { label: "ESCALATE", icon: Gavel, className: "band-high", desc: "Supervisor manual review required" };
+    case "BLOCK":
+      return { label: "BLOCK", icon: ShieldX, className: "band-high", desc: "Transaction hold / call freeze" };
+    default:
+      return { label: decision, icon: AlertTriangle, className: "band-unknown", desc: "Awaiting decision" };
+  }
+};
+
+export default function CallDetail({ call, onStop, busy, onOpenOverride, onOpenSummary }) {
   const latest = call?.latest;
   const history = call?.history || [];
   const env = latest?.features?.rms_envelope || [];
   const meta = bandMeta(call?.band);
+  const decision = call?.decision || latest?.decision?.decision || "WARN";
+  const dMeta = decisionMeta(decision);
+  const decisionDetails = call?.decision_details || latest?.decision;
+  const verification = call?.speaker_verification;
+
   const points = history
     .map(
       (value, index) =>
@@ -21,22 +43,29 @@ export default function CallDetail({ call, onStop, busy }) {
       {call?.degraded && (
         <div className="degraded-strip" role="status">
           Assessment is degraded ·{" "}
-          {call.degraded_reasons.map(titleCase).join(" · ")}
+          {call.degraded_reasons?.map(titleCase).join(" · ")}
         </div>
       )}
+
       <div className="panel-heading">
         <h2>
-          <AudioLines size={17} /> Signal analysis
+          <AudioLines size={17} /> Signal analysis & Decision
         </h2>
-        <span
-          className={`badge band-badge ${meta.className}`}
-          aria-live="assertive"
-          aria-label={`Assessment: ${meta.label}`}
-        >
-          <span aria-hidden="true">{meta.glyph}</span>
-          {meta.label}
-        </span>
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <span
+            className={`badge band-badge ${meta.className}`}
+            aria-live="assertive"
+            aria-label={`Assessment: ${meta.label}`}
+          >
+            <span aria-hidden="true">{meta.glyph}</span>
+            {meta.label}
+          </span>
+          <span className={`badge ${dMeta.className}`} style={{ fontWeight: 600, padding: "4px 8px", borderRadius: "4px" }}>
+            DECISION: {dMeta.label}
+          </span>
+        </div>
       </div>
+
       <div className="analysis-title">
         <div>
           <span className="eyebrow">SELECTED SESSION</span>
@@ -57,11 +86,18 @@ export default function CallDetail({ call, onStop, busy }) {
             </p>
           )}
         </div>
-        {call?.status === "streaming" && (
-          <button className="quiet" disabled={busy} onClick={onStop}>
-            <Square size={13} /> Stop
-          </button>
-        )}
+        <div style={{ display: "flex", gap: "8px" }}>
+          {call?.status === "streaming" && (
+            <button className="quiet" disabled={busy} onClick={onStop}>
+              <Square size={13} /> Stop Stream
+            </button>
+          )}
+          {call?.status !== "streaming" && call?.windows_scored > 0 && (
+            <button className="quiet" onClick={() => onOpenSummary(call)}>
+              <FileText size={13} /> View Summary
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="signal-layout">
@@ -106,8 +142,78 @@ export default function CallDetail({ call, onStop, busy }) {
               />
               {latest ? "Latest derived envelope" : "No audio processed"}
             </span>
-            <span>No raw audio retained</span>
+            <span>No raw audio retained (Zero Disk Policy)</span>
           </div>
+        </div>
+      </div>
+
+      {/* Decision Service & Speaker Verification Row */}
+      <div className="explainability-grid" style={{ marginBottom: "16px" }}>
+        <div className="explainability-block" style={{ borderLeft: "3px solid var(--color-accent)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+            <h3 style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <Gavel size={15} /> Automated Decision Engine
+            </h3>
+            {call && (
+              <button
+                className="quiet"
+                style={{ minHeight: "28px", padding: "4px 8px", fontSize: "12px" }}
+                onClick={() => onOpenOverride(call)}
+              >
+                Override
+              </button>
+            )}
+          </div>
+          <p><strong>Verdict:</strong> {dMeta.label} ({dMeta.desc})</p>
+          {decisionDetails?.reason_code && (
+            <p style={{ fontSize: "12px", color: "var(--color-muted)", fontFamily: "var(--font-mono)" }}>
+              Reason: {decisionDetails.reason_code}
+            </p>
+          )}
+          {decisionDetails?.explanation_for_human && (
+            <p style={{ fontSize: "13px", marginTop: "4px" }}>
+              {decisionDetails.explanation_for_human}
+            </p>
+          )}
+          {decisionDetails?.origin_signature && (
+            <div style={{ fontSize: "11px", color: "var(--color-subtle)", fontFamily: "var(--font-mono)", marginTop: "6px", wordBreak: "break-all" }}>
+              Proof: {decisionDetails.origin_signature.slice(0, 32)}...
+            </div>
+          )}
+          {decisionDetails?.overridden && (
+            <div style={{ background: "var(--color-danger-bg)", color: "var(--color-danger)", padding: "4px 8px", borderRadius: "4px", fontSize: "12px", marginTop: "6px" }}>
+              ⚠️ Overridden by {decisionDetails.override_details?.supervisor_id} ({decisionDetails.override_details?.role})
+            </div>
+          )}
+        </div>
+
+        <div className="explainability-block">
+          <h3>
+            <UserCheck size={15} /> Speaker Verification
+          </h3>
+          {verification?.reference_available ? (
+            <div>
+              <p style={{ color: "var(--color-safe)", fontWeight: 500 }}>
+                ✓ Enrolled Identity Match: <strong>{verification.enrolled_identity}</strong>
+              </p>
+              <div className="factor-row" style={{ marginTop: "4px" }}>
+                <span>Acoustic Profile Match</span>
+                <strong>{(verification.match_score * 100).toFixed(1)}%</strong>
+              </div>
+              <p style={{ fontSize: "12px", color: "var(--color-muted)" }}>
+                Model: {verification.model_version} · Voiced: {verification.voiced_seconds_used}s
+              </p>
+            </div>
+          ) : (
+            <div>
+              <p style={{ color: "var(--color-muted)" }}>
+                ◌ No enrolled reference profile for this caller identity.
+              </p>
+              <p style={{ fontSize: "12px", color: "var(--color-subtle)" }}>
+                Speaker verification gated inactive (DR-012 compliant).
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -188,7 +294,7 @@ export default function CallDetail({ call, onStop, busy }) {
           <line x1="20" y1="102" x2="680" y2="102" className="threshold-line" />
           <line
             x1="20"
-            y1="66"
+            y1={66}
             x2="680"
             y2="66"
             className="threshold-line high"
@@ -219,7 +325,7 @@ export default function CallDetail({ call, onStop, busy }) {
       </div>
       <div className="detail-footer">
         <span>
-          <Timer size={14} /> Detection latency:{" "}
+          <Timer size={14} /> Latency:{" "}
           <b>
             {call?.latency_ms == null
               ? "—"
