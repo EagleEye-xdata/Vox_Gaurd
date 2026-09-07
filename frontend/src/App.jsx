@@ -41,14 +41,6 @@ export default function App() {
     [verification, setVerification] = useState(null),
     [page, setPage] = useState("monitor"),
     [twoWayCallOpen, setTwoWayCallOpen] = useState(false),
-    [filename, setFilename] = useState(""),
-    [label, setLabel] = useState("CFO transfer request"),
-    [amount, setAmount] = useState(250000),
-    [known, setKnown] = useState(false),
-    [newBeneficiary, setNewBeneficiary] = useState(true),
-    [urgency, setUrgency] = useState("high"),
-    [selectedIdentity, setSelectedIdentity] = useState("cust_rajesh_9012"),
-    [simulateFailure, setSimulateFailure] = useState(false),
     [notification, setNotification] = useState(null);
 
   // Modals state
@@ -58,8 +50,7 @@ export default function App() {
   const [enrolmentModalOpen, setEnrolmentModalOpen] = useState(false);
 
   const seenAlerts = useRef(new Set());
-  const dialog = useRef(),
-    ws = useRef();
+  const ws = useRef();
 
   async function refresh() {
     try {
@@ -77,13 +68,6 @@ export default function App() {
       setEnrolments(e);
       setOnline(true);
       setSelected((s) => s || c[0]?.call_id || null);
-      setFilename(
-        (s) =>
-          s ||
-          f.find((a) => a.filename === "fixture-steady.wav")?.filename ||
-          f[0]?.filename ||
-          "",
-      );
     } catch {
       setOnline(false);
     }
@@ -137,33 +121,6 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }
-
-  async function start(e) {
-    e.preventDefault();
-    await act(async () => {
-      const result = await api("/stream/start", {
-        filename,
-        label,
-        context: {
-          caller_attestation: known ? "KNOWN_UNVERIFIED" : "UNKNOWN",
-          attestation_source: known ? "CALLER_ID_ONLY" : "NONE",
-          transaction_value: Number(amount),
-          transaction_currency: "INR",
-          transaction_type: "wire_transfer",
-          beneficiary_is_new: newBeneficiary,
-          request_urgency: urgency,
-          urgency_source: "AGENT_ASSERTED",
-          confirmed_fraud_flags_90d: 0,
-        },
-        interval: 1,
-        simulate_detector_failure: simulateFailure,
-        identity_id: selectedIdentity || null,
-      });
-      setSelected(result.call_id);
-      dialog.current.close();
-      setPage("monitor");
-    });
   }
 
   async function verify() {
@@ -393,13 +350,7 @@ export default function App() {
                   }}
                   onClick={() => setTwoWayCallOpen(true)}
                 >
-                  <Radio size={16} /> 2-Way Live Call
-                </button>
-                <button
-                  className="secondary"
-                  onClick={() => dialog.current.showModal()}
-                >
-                  <Play size={16} /> Simulate call
+                  <Radio size={16} /> 2-Way Live AI Call
                 </button>
               </div>
             )}
@@ -628,112 +579,6 @@ export default function App() {
           )}
         </main>
       </div>
-
-      {/* Simulation Setup Dialog */}
-      <dialog ref={dialog} className="dialog">
-        <form onSubmit={start}>
-          <div className="dialog-heading">
-            <h2>Simulate live inbound call</h2>
-            <button
-              type="button"
-              className="quiet"
-              onClick={() => dialog.current.close()}
-            >
-              <X size={18} />
-            </button>
-          </div>
-          <div className="dialog-body">
-            <label>
-              Audio sample:
-              <select
-                value={filename}
-                onChange={(e) => setFilename(e.target.value)}
-              >
-                {audio.map((f) => (
-                  <option key={f.filename} value={f.filename}>
-                    {f.filename} {f.fixture ? "(Fixture)" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Scenario label:
-              <input
-                type="text"
-                value={label}
-                onChange={(e) => setLabel(e.target.value)}
-              />
-            </label>
-            <label>
-              Speaker Enrolment Match:
-              <select
-                value={selectedIdentity}
-                onChange={(e) => setSelectedIdentity(e.target.value)}
-              >
-                <option value="">No Enrolment (Reference Unavailable)</option>
-                {enrolments.map((p) => (
-                  <option key={p.identity_id} value={p.identity_id}>
-                    {p.display_name} ({p.identity_id})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Transaction amount (INR):
-              <input
-                type="number"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-              />
-            </label>
-            <label>
-              Urgency level:
-              <select
-                value={urgency}
-                onChange={(e) => setUrgency(e.target.value)}
-              >
-                <option value="low">Low</option>
-                <option value="normal">Normal</option>
-                <option value="high">High</option>
-              </select>
-            </label>
-            <div style={{ display: "flex", gap: "16px", marginTop: "8px" }}>
-              <label
-                style={{ display: "flex", alignItems: "center", gap: "6px" }}
-              >
-                <input
-                  type="checkbox"
-                  checked={newBeneficiary}
-                  onChange={(e) => setNewBeneficiary(e.target.checked)}
-                />
-                New Beneficiary
-              </label>
-              <label
-                style={{ display: "flex", alignItems: "center", gap: "6px" }}
-              >
-                <input
-                  type="checkbox"
-                  checked={simulateFailure}
-                  onChange={(e) => setSimulateFailure(e.target.checked)}
-                />
-                Simulate Detector Chaos
-              </label>
-            </div>
-          </div>
-          <div className="dialog-footer">
-            <button
-              type="button"
-              className="quiet"
-              onClick={() => dialog.current.close()}
-            >
-              Cancel
-            </button>
-            <button type="submit" className="primary" disabled={busy}>
-              Start Stream
-            </button>
-          </div>
-        </form>
-      </dialog>
 
       {/* Modals */}
       <SupervisorOverrideModal
