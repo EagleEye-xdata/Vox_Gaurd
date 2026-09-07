@@ -14,6 +14,7 @@ import {
   UserCheck,
   Gavel,
   FileText,
+  PhoneCall,
 } from "lucide-react";
 import { api, socket } from "./api";
 import Dashboard from "./components/Dashboard";
@@ -24,6 +25,7 @@ import SupervisorOverrideModal from "./components/SupervisorOverrideModal";
 import AppealModal from "./components/AppealModal";
 import SessionSummaryModal from "./components/SessionSummaryModal";
 import EnrolmentModal from "./components/EnrolmentModal";
+import WebPhone from "./components/WebPhone";
 
 export default function App() {
   const [calls, setCalls] = useState([]),
@@ -248,6 +250,7 @@ export default function App() {
             [LayoutDashboard, "monitor", "Call monitor"],
             [Workflow, "pipeline", "Detection pipeline"],
             [BookOpen, "ledger", "Audit trail"],
+            [PhoneCall, "telephony", "Live Phone"],
           ].map(([Icon, key, title]) => (
             <button
               key={key}
@@ -268,7 +271,11 @@ export default function App() {
         <div style={{ padding: "0 12px", marginTop: "12px" }}>
           <button
             className="nav-item"
-            style={{ width: "100%", justifyContent: "flex-start", background: "var(--color-paper-2)" }}
+            style={{
+              width: "100%",
+              justifyContent: "flex-start",
+              background: "var(--color-paper-2)",
+            }}
             onClick={() => setEnrolmentModalOpen(true)}
           >
             <UserCheck size={16} color="var(--color-safe)" />
@@ -309,7 +316,9 @@ export default function App() {
                   ? "Detection pipeline"
                   : page === "ledger"
                     ? "Audit trail"
-                    : "Demo guide"}
+                    : page === "telephony"
+                      ? "Live Phone"
+                      : "Demo guide"}
             </strong>
           </div>
           <span className="environment">
@@ -324,6 +333,7 @@ export default function App() {
               ["monitor", "Monitor"],
               ["pipeline", "Pipeline"],
               ["ledger", "Ledger"],
+              ["telephony", "Live Phone"],
               ["guide", "Guide"],
             ].map(([key, title]) => (
               <button
@@ -344,7 +354,9 @@ export default function App() {
                     ? "DETECTION PIPELINE"
                     : page === "ledger"
                       ? "AUDIT TRAIL"
-                      : "DOCUMENTATION"}
+                      : page === "telephony"
+                        ? "TELEPHONY INTERFACE"
+                        : "DOCUMENTATION"}
               </span>
               <h1>
                 {page === "monitor"
@@ -353,7 +365,9 @@ export default function App() {
                     ? "Audio processing pipeline"
                     : page === "ledger"
                       ? "Forensic audit ledger"
-                      : "VoiceShield AI guide"}
+                      : page === "telephony"
+                        ? "Live SIP softphone"
+                        : "VoiceShield AI guide"}
               </h1>
               <p>
                 {page === "monitor"
@@ -362,11 +376,16 @@ export default function App() {
                     ? "Acoustic extraction and multi-factor fusion."
                     : page === "ledger"
                       ? "Immutable SHA-256 hash chain and origin decision signatures."
-                      : "System architecture and judge Q&A summary."}
+                      : page === "telephony"
+                        ? "Connect to Asterisk PBX over SIP/WSS and monitor live phone calls in real time."
+                        : "System architecture and judge Q&A summary."}
               </p>
             </div>
             {page === "monitor" && (
-              <button className="primary" onClick={() => dialog.current.showModal()}>
+              <button
+                className="primary"
+                onClick={() => dialog.current.showModal()}
+              >
                 <Play size={16} /> Simulate call
               </button>
             )}
@@ -413,32 +432,49 @@ export default function App() {
                   <div className="step-card">
                     <span className="step-number">01</span>
                     <h3>Ingestion & Normalisation</h3>
-                    <p>16 kHz mono resampling, ring buffer (Zero Disk Storage).</p>
+                    <p>
+                      16 kHz mono resampling, ring buffer (Zero Disk Storage).
+                    </p>
                   </div>
                   <div className="step-card">
                     <span className="step-number">02</span>
                     <h3>Voice Activity & Butterworth Filtering</h3>
-                    <p>80-3800 Hz bandpass, energy + in-band spectral flatness VAD.</p>
+                    <p>
+                      80-3800 Hz bandpass, energy + in-band spectral flatness
+                      VAD.
+                    </p>
                   </div>
                   <div className="step-card">
                     <span className="step-number">03</span>
                     <h3>Acoustic Feature Extraction</h3>
-                    <p>13 MFCCs, log-mel filterbanks, YIN pitch & prosody statistics.</p>
+                    <p>
+                      13 MFCCs, log-mel filterbanks, YIN pitch & prosody
+                      statistics.
+                    </p>
                   </div>
                   <div className="step-card">
                     <span className="step-number">04</span>
                     <h3>Parallel AI Detection & Speaker Match</h3>
-                    <p>Spoof classification and text-independent voice embedding matching.</p>
+                    <p>
+                      Spoof classification and text-independent voice embedding
+                      matching.
+                    </p>
                   </div>
                   <div className="step-card">
                     <span className="step-number">05</span>
                     <h3>Active-Signal Risk Fusion</h3>
-                    <p>Active renormalisation, contextual weighting, and strict score floors.</p>
+                    <p>
+                      Active renormalisation, contextual weighting, and strict
+                      score floors.
+                    </p>
                   </div>
                   <div className="step-card">
                     <span className="step-number">06</span>
                     <h3>Decision Engine & Tamper-Evident WAL</h3>
-                    <p>Banded actions (ALLOW/WARN/STEP_UP/BLOCK) signed at origin.</p>
+                    <p>
+                      Banded actions (ALLOW/WARN/STEP_UP/BLOCK) signed at
+                      origin.
+                    </p>
                   </div>
                 </div>
               </section>
@@ -458,28 +494,74 @@ export default function App() {
             <div className="panel guide-panel" style={{ padding: "20px" }}>
               <h2>System Architecture & Compliance Overview</h2>
               <p style={{ marginTop: "8px" }}>
-                VoiceShield AI provides a real-time, explainable, and provably tamper-evident
-                defense against generative voice cloning and impersonation attacks in financial communications.
+                VoiceShield AI provides a real-time, explainable, and provably
+                tamper-evident defense against generative voice cloning and
+                impersonation attacks in financial communications.
               </p>
-              <div style={{ marginTop: "16px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-                <div style={{ background: "var(--color-paper-2)", padding: "12px", borderRadius: "6px" }}>
+              <div
+                style={{
+                  marginTop: "16px",
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "16px",
+                }}
+              >
+                <div
+                  style={{
+                    background: "var(--color-paper-2)",
+                    padding: "12px",
+                    borderRadius: "6px",
+                  }}
+                >
                   <h3>Core Invariants</h3>
-                  <ul style={{ paddingLeft: "20px", fontSize: "13px", color: "var(--color-muted)" }}>
+                  <ul
+                    style={{
+                      paddingLeft: "20px",
+                      fontSize: "13px",
+                      color: "var(--color-muted)",
+                    }}
+                  >
                     <li>Zero raw audio touches disk or broker logs.</li>
-                    <li>Floors applied last via max() to prevent masking attacks.</li>
+                    <li>
+                      Floors applied last via max() to prevent masking attacks.
+                    </li>
                     <li>Absence of evidence is UNKNOWN, never LOW.</li>
                     <li>Origin cryptographic signing on all decisions.</li>
                   </ul>
                 </div>
-                <div style={{ background: "var(--color-paper-2)", padding: "12px", borderRadius: "6px" }}>
+                <div
+                  style={{
+                    background: "var(--color-paper-2)",
+                    padding: "12px",
+                    borderRadius: "6px",
+                  }}
+                >
                   <h3>Compliance & Redress</h3>
-                  <ul style={{ paddingLeft: "20px", fontSize: "13px", color: "var(--color-muted)" }}>
-                    <li>Complies with India DPDP Act & GDPR biometric constraints.</li>
-                    <li>Integrated customer dispute & appeal filing workflow.</li>
-                    <li>Closed-loop analyst resolution for continuous feedback.</li>
+                  <ul
+                    style={{
+                      paddingLeft: "20px",
+                      fontSize: "13px",
+                      color: "var(--color-muted)",
+                    }}
+                  >
+                    <li>
+                      Complies with India DPDP Act & GDPR biometric constraints.
+                    </li>
+                    <li>
+                      Integrated customer dispute & appeal filing workflow.
+                    </li>
+                    <li>
+                      Closed-loop analyst resolution for continuous feedback.
+                    </li>
                   </ul>
                 </div>
               </div>
+            </div>
+          )}
+
+          {page === "telephony" && (
+            <div style={{ display: "flex", justifyContent: "center", padding: "24px 0" }}>
+              <WebPhone />
             </div>
           )}
         </main>
@@ -554,7 +636,9 @@ export default function App() {
               </select>
             </label>
             <div style={{ display: "flex", gap: "16px", marginTop: "8px" }}>
-              <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <label
+                style={{ display: "flex", alignItems: "center", gap: "6px" }}
+              >
                 <input
                   type="checkbox"
                   checked={newBeneficiary}
@@ -562,7 +646,9 @@ export default function App() {
                 />
                 New Beneficiary
               </label>
-              <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <label
+                style={{ display: "flex", alignItems: "center", gap: "6px" }}
+              >
                 <input
                   type="checkbox"
                   checked={simulateFailure}

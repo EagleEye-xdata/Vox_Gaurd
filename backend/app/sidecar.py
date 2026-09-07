@@ -27,6 +27,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from .detection import classifier
+from .audiosocket import AudioSocketIngest
 from .features import extract
 from .ingestion import AUDIO_DIR, chunks, resolve_audio
 from .preprocessing import SAMPLE_RATE, preprocess
@@ -66,10 +67,16 @@ streams: dict[str, dict] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield
-    for state in list(streams.values()):
-        state["generator"].close()
-    streams.clear()
+    live_ingest = AudioSocketIngest(analyse_buffer)
+    await live_ingest.start()
+    app.state.live_ingest = live_ingest
+    try:
+        yield
+    finally:
+        await live_ingest.close()
+        for state in list(streams.values()):
+            state["generator"].close()
+        streams.clear()
 
 
 app = FastAPI(title="VoxGuard ML sidecar", version="1.0.0", lifespan=lifespan)
@@ -139,6 +146,7 @@ def window_results(path: Path, identity_id: str | None, window_seconds: float, h
 
 @app.get("/internal/health")
 def health():
+    live_ingest = getattr(app.state, "live_ingest", None)
     return {
         "status": "ok",
         "model": classifier.name,
@@ -147,6 +155,8 @@ def health():
         "verifier_version": VERIFIER_VERSION,
         "sample_rate": SAMPLE_RATE,
         "raw_audio_persistence": False,
+        "audiosocket_state": live_ingest.state if live_ingest else "unavailable",
+        "audiosocket_port": live_ingest.bound_port if live_ingest else None,
     }
 
 
