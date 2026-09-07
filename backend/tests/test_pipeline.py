@@ -7,7 +7,9 @@ the audit ledger — moved to Go with the architecture in docs/01 section 2. Tho
 golden_test.go`, which replays vectors emitted from the Python implementation that used to live
 here, so the port cannot have silently changed the arithmetic.
 """
+import asyncio
 import re
+from uuid import uuid4
 from pathlib import Path
 
 import numpy as np
@@ -15,12 +17,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import sidecar
+from app.audiosocket import AudioSocketIngest, FRAME_AUDIO_8K, FRAME_HANGUP, FRAME_UUID
 from app.detection import classifier
 from app.features import extract
 from app.preprocessing import preprocess
 from app.speaker_verification import verifier
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def audiosocket_frame(frame_type: int, payload: bytes = b'') -> bytes:
+    return bytes([frame_type]) + len(payload).to_bytes(2, 'big') + payload
 
 
 # --------------------------------------------------------------------------------------------
@@ -250,6 +257,73 @@ def test_consent_log_gates_every_human_voice_file():
 # --------------------------------------------------------------------------------------------
 # Retention (T-4.7)
 # --------------------------------------------------------------------------------------------
+
+def test_audiosocket_ingest_forwards_only_derived_windows():
+    class FakeGateway:
+        def __init__(self):
+            self.started = []
+            self.windows = []
+            self.closed = []
+
+        async def start(self, call_id):
+            self.started.append(call_id)
+
+        async def push(self, call_id, window):
+            self.windows.append((call_id, window))
+
+        async def close(self, call_id):
+            self.closed.append(call_id)
+
+    seen_lengths = []
+
+    def fake_analyser(audio, identity_id):
+        seen_lengths.append(len(audio))
+        audio.fill(0)
+        return {
+            'scored': True,
+            'spectral_score': .8,
+            'prosody_score': .7,
+            'synthetic_score': .75,
+            'p_synthetic': .75,
+            'p_synthetic_raw': .75,
+            'confidence': .9,
+            'voiced_seconds': 3.0,
+            'speech_ratio': 1.0,
+            'latency_ms': 1.0,
+            'features': {'rms_envelope': [.1, .2]},
+            'model_version': 'test-detector@1',
+            'calibrator_version': 'test-calibrator@1',
+        }
+
+    async def scenario():
+        gateway = FakeGateway()
+        ingest = AudioSocketIngest(fake_analyser, gateway=gateway, host='127.0.0.1', port=0)
+        await ingest.start()
+        try:
+            _, writer = await asyncio.open_connection('127.0.0.1', ingest.bound_port)
+            call_id = uuid4()
+            pcm = np.full(8000 * 3, 1000, dtype='<i2').tobytes()
+            writer.write(audiosocket_frame(FRAME_UUID, call_id.bytes))
+            writer.write(audiosocket_frame(FRAME_AUDIO_8K, pcm))
+            writer.write(audiosocket_frame(FRAME_HANGUP))
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+            for _ in range(100):
+                if gateway.closed:
+                    break
+                await asyncio.sleep(.01)
+            assert gateway.started == [str(call_id)]
+            assert gateway.closed == [str(call_id)]
+            assert len(gateway.windows) == 1
+            forwarded = gateway.windows[0][1]
+            assert forwarded['chunk_index'] == 1
+            assert not ({'samples', 'audio', 'pcm', 'waveform'} & forwarded.keys())
+            assert seen_lengths == [16000 * 3]
+        finally:
+            await ingest.close()
+
+    asyncio.run(scenario())
 
 def test_t4_7_retention_sweep_proves_no_raw_audio_on_disk():
     """No audio may exist outside demo_audio/, on either side of the Go/Python split."""

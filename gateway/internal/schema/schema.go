@@ -184,6 +184,36 @@ type Start struct {
 	IdentityID               *string  `json:"identity_id"`
 }
 
+// LiveStart opens a live Asterisk session. Raw media arrives at the Python AudioSocket listener;
+// this request carries only metadata used by the Go session and scoring layers.
+type LiveStart struct {
+	Label      *string  `json:"label"`
+	Context    *Context `json:"context"`
+	Language   *string  `json:"language"`
+	IdentityID *string  `json:"identity_id"`
+}
+
+// Validate applies the same language, identity and context rules as a simulated session.
+func (s *LiveStart) Validate() error {
+	defaultString(&s.Label, "Live Asterisk call")
+	if l := len(*s.Label); l < 1 || l > 80 {
+		return invalid("label must be between 1 and 80 characters.")
+	}
+	defaultString(&s.Language, "en")
+	if !languagePattern.MatchString(*s.Language) {
+		return invalid("language must be a two-letter code, optionally with a region (for example hi or hi-en).")
+	}
+	if s.IdentityID != nil {
+		if len(*s.IdentityID) > 80 || (*s.IdentityID != "" && !identityIDPattern.MatchString(*s.IdentityID)) {
+			return invalid("identity_id must contain only letters, numbers, underscores or hyphens and be at most 80 characters.")
+		}
+	}
+	if s.Context == nil {
+		s.Context = &Context{}
+	}
+	return s.Context.Validate()
+}
+
 // Validate applies defaults and bounds.
 func (s *Start) Validate() error {
 	if l := len(s.Filename); l < 1 || l > 200 {

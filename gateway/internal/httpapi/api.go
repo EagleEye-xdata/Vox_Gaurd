@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -55,6 +56,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/stream/{call_id}/stop", s.stopStream)
 	mux.HandleFunc("POST /api/v1/sessions/{call_id}/close", s.closeSession)
 	mux.HandleFunc("/ws/audio/{call_id}", s.websocket)
+	mux.HandleFunc("POST /internal/live-sessions/{call_id}", s.internalOnly(s.startLiveSession))
+	mux.HandleFunc("POST /internal/live-sessions/{call_id}/windows", s.internalOnly(s.pushLiveWindow))
+	mux.HandleFunc("POST /internal/live-sessions/{call_id}/close", s.internalOnly(s.finishLiveSession))
 
 	// Audio in flight only: these two stream their bodies to the Python sidecar unparsed.
 	mux.HandleFunc("POST /api/v1/detect", s.proxyDetect)
@@ -105,6 +109,20 @@ func (s *Server) originAllowed(origin string) bool {
 		}
 	}
 	return false
+}
+
+// internalOnly keeps the derived Python-to-Go boundary local to this machine. Browsers and PBX
+// clients never submit detector output themselves.
+func (s *Server) internalOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		ip := net.ParseIP(host)
+		if err != nil || ip == nil || !ip.IsLoopback() {
+			s.fail(w, http.StatusForbidden, "This endpoint is available only to the local analysis service.")
+			return
+		}
+		next(w, r)
+	}
 }
 
 // recoverPanics turns a panic into a 500 and a log line.
@@ -250,6 +268,75 @@ func (s *Server) stopStream(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) closeSession(w http.ResponseWriter, r *http.Request) {
 	summary, err := s.Sessions.Close(r.PathValue("call_id"))
+	if err != nil {
+		s.fail(w, http.StatusNotFound, "Call not found")
+		return
+	}
+	s.ok(w, summary)
+}
+
+func (s *Server) startLiveSession(w http.ResponseWriter, r *http.Request) {
+	var body schema.LiveStart
+	if !decode(s, w, r, &body) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	health, err := s.Sidecar.Health(ctx)
+	if err != nil {
+		status, detail := sidecarStatus(err)
+		s.fail(w, status, detail)
+		return
+	}
+	identity := ""
+	if body.IdentityID != nil {
+		identity = *body.IdentityID
+	}
+	verifierVersion := "not_enrolled"
+	if identity != "" {
+		verifierVersion = health.VerifierVersion
+	}
+	err = s.Sessions.StartLive(r.PathValue("call_id"), session.StartOptions{
+		Label: *body.Label, Language: *body.Language, IdentityID: identity,
+		Context: body.Context.ToScoring(),
+	}, map[string]string{
+		"detector": health.ModelVersion, "calibrator": health.CalibratorVersion,
+		"verifier": verifierVersion,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrTooManyStreams):
+			s.fail(w, http.StatusTooManyRequests, err.Error())
+		case errors.Is(err, session.ErrDuplicate):
+			s.fail(w, http.StatusConflict, err.Error())
+		default:
+			s.fail(w, http.StatusUnprocessableEntity, err.Error())
+		}
+		return
+	}
+	call, _ := s.Sessions.Get(r.PathValue("call_id"))
+	s.ok(w, call.Public())
+}
+
+func (s *Server) pushLiveWindow(w http.ResponseWriter, r *http.Request) {
+	var body sidecar.Window
+	if !decode(s, w, r, &body) {
+		return
+	}
+	call, err := s.Sessions.PushLiveWindow(r.PathValue("call_id"), body)
+	if err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			s.fail(w, http.StatusNotFound, "Call not found")
+			return
+		}
+		s.fail(w, http.StatusConflict, err.Error())
+		return
+	}
+	s.ok(w, call)
+}
+
+func (s *Server) finishLiveSession(w http.ResponseWriter, r *http.Request) {
+	summary, err := s.Sessions.FinishLive(r.PathValue("call_id"))
 	if err != nil {
 		s.fail(w, http.StatusNotFound, "Call not found")
 		return

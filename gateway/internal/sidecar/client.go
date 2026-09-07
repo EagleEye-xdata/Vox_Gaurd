@@ -15,9 +15,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -97,6 +99,55 @@ type Window struct {
 
 	Features     map[string]any `json:"features"`
 	Verification *Verification  `json:"verification"`
+}
+
+// Validate rejects malformed derived windows at the private Python-to-Go boundary. Audio is
+// deliberately absent from this type; only the analysis needed by fusion may cross the boundary.
+func (w *Window) Validate() error {
+	if w.ChunkIndex < 1 {
+		return fmt.Errorf("chunk_index must be at least 1")
+	}
+	if !finiteBetween(w.LatencyMS, 0, 600000) {
+		return fmt.Errorf("latency_ms must be a finite non-negative number")
+	}
+	if !w.Scored {
+		if strings.TrimSpace(w.Reason) == "" {
+			return fmt.Errorf("an unscored window must include a reason")
+		}
+		return nil
+	}
+	for name, value := range map[string]float64{
+		"spectral_score": w.SpectralScore, "prosody_score": w.ProsodyScore,
+		"synthetic_score": w.SyntheticScore, "p_synthetic": w.PSynthetic,
+		"p_synthetic_raw": w.PSyntheticRaw, "confidence": w.Confidence,
+		"speech_ratio": w.SpeechRatio,
+	} {
+		if !finiteBetween(value, 0, 1) {
+			return fmt.Errorf("%s must be a finite number between 0 and 1", name)
+		}
+	}
+	if !finiteBetween(w.VoicedSeconds, 0, 10) {
+		return fmt.Errorf("voiced_seconds must be a finite number between 0 and 10")
+	}
+	if strings.TrimSpace(w.ModelVersion) == "" || strings.TrimSpace(w.CalibratorVersion) == "" {
+		return fmt.Errorf("model_version and calibrator_version are required")
+	}
+	if v := w.Verification; v != nil {
+		if !v.ReferenceAvailable && v.MatchScore != nil {
+			return fmt.Errorf("match_score must be absent when reference_available is false")
+		}
+		if v.ReferenceAvailable && !v.Failed && v.MatchScore == nil {
+			return fmt.Errorf("match_score is required when reference_available is true")
+		}
+		if v.MatchScore != nil && !finiteBetween(*v.MatchScore, 0, 1) {
+			return fmt.Errorf("match_score must be a finite number between 0 and 1")
+		}
+	}
+	return nil
+}
+
+func finiteBetween(value, low, high float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= low && value <= high
 }
 
 // Enrolment is an enrolled speaker profile as listed by the sidecar.

@@ -428,6 +428,45 @@ func TestSessionCloseReturnsASummary(t *testing.T) {
 	}
 }
 
+func TestAudioSocketDerivedWindowsUseTheGoSessionPipeline(t *testing.T) {
+	h := newHarness(t, nil)
+	callID := "97d6dd7f-86f7-4ae7-a6ec-39e7d44c4148"
+	status, started := h.do(http.MethodPost, "/internal/live-sessions/"+callID,
+		map[string]any{"label": "Live Asterisk call", "language": "en"})
+	if status != http.StatusOK {
+		t.Fatalf("start live session = %d: %v", status, started)
+	}
+	if started["filename"] != "live:asterisk-audiosocket" {
+		t.Errorf("live source = %v", started["filename"])
+	}
+
+	for i := 1; i <= 2; i++ {
+		window := scoredWindow(0.95, 0.95, 3.0)
+		window["chunk_index"] = i
+		status, current := h.do(http.MethodPost,
+			"/internal/live-sessions/"+callID+"/windows", window)
+		if status != http.StatusOK {
+			t.Fatalf("push live window %d = %d: %v", i, status, current)
+		}
+	}
+
+	status, summary := h.do(http.MethodPost, "/internal/live-sessions/"+callID+"/close", nil)
+	if status != http.StatusOK {
+		t.Fatalf("finish live session = %d: %v", status, summary)
+	}
+	if summary["session_id"] != callID || summary["windows_scored"] != float64(2) {
+		t.Errorf("unexpected live summary: %v", summary)
+	}
+	if summary["policy_version"] != policy.Default.Version {
+		t.Errorf("live summary omitted policy version: %v", summary)
+	}
+
+	_, verify := h.do(http.MethodGet, "/api/v1/ledger/verify/all", nil)
+	if verify["valid"] != true {
+		t.Errorf("live call audit chain did not verify: %v", verify)
+	}
+}
+
 func TestAlertLifecycleOverTheAPI(t *testing.T) {
 	windows := make([]map[string]any, 5)
 	for i := range windows {

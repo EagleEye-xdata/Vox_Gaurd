@@ -133,6 +133,7 @@ type Call struct {
 	public PublicCall
 	risk   *scoring.SessionRisk
 	ctx    *scoring.Context
+	opts   StartOptions
 
 	events *eventLog
 	cancel context.CancelFunc
@@ -237,6 +238,12 @@ var ErrTooManyStreams = fmt.Errorf("%d simultaneous demo calls are supported", M
 // ErrNotFound reports an unknown call id.
 var ErrNotFound = fmt.Errorf("call not found")
 
+// ErrDuplicate reports an AudioSocket UUID that is already active or retained.
+var ErrDuplicate = fmt.Errorf("call already exists")
+
+// ErrOutOfOrder reports a replayed or reordered derived window.
+var ErrOutOfOrder = fmt.Errorf("window is out of order")
+
 // Start opens a call and begins streaming it in the background.
 func (m *Manager) Start(ctx context.Context, opts StartOptions) (string, error) {
 	m.mu.Lock()
@@ -271,6 +278,7 @@ func (m *Manager) Start(ctx context.Context, opts StartOptions) (string, error) 
 	call := &Call{
 		risk:   scoring.NewSessionRisk(callID),
 		ctx:    opts.Context,
+		opts:   opts,
 		events: newEventLog(),
 		public: PublicCall{
 			CallID:                   callID,
@@ -309,6 +317,97 @@ func (m *Manager) Start(ctx context.Context, opts StartOptions) (string, error) 
 	go m.run(runCtx, call, handle.StreamID, opts)
 
 	return callID, nil
+}
+
+// StartLive registers a call whose raw media is owned by the Python AudioSocket listener. Only
+// model metadata and later derived windows cross into this Go process.
+func (m *Manager) StartLive(callID string, opts StartOptions, modelVersions map[string]string) error {
+	if _, err := uuid.Parse(callID); err != nil {
+		return fmt.Errorf("call id must be a canonical UUID: %w", err)
+	}
+	if opts.Filename == "" {
+		opts.Filename = "live:asterisk-audiosocket"
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.calls[callID]; exists {
+		return ErrDuplicate
+	}
+	streaming := 0
+	for _, c := range m.calls {
+		if c.snapshotStatus() == "streaming" {
+			streaming++
+		}
+	}
+	if streaming >= MaxConcurrentStreams {
+		return ErrTooManyStreams
+	}
+
+	call := &Call{
+		risk: scoring.NewSessionRisk(callID), ctx: opts.Context, opts: opts, events: newEventLog(),
+		public: PublicCall{
+			CallID: callID, Label: opts.Label, Filename: opts.Filename, Status: "streaming",
+			StartedAt: nowISO(), Band: "UNKNOWN", Decision: "WARN", History: []float64{},
+			BandTimeline: []scoring.BandPoint{{Window: 0, Band: "UNKNOWN"}},
+			DegradedReasons: []string{}, ContributingFactors: []scoring.Factor{},
+			AppliedFloors: []scoring.Floor{}, ContextDetails: []scoring.ContextDetail{},
+			Language: opts.Language, LanguageSupported: m.pack.SupportsLanguage(opts.Language),
+			IdentityID: opts.IdentityID, PolicyVersion: m.pack.Version, ModelVersions: modelVersions,
+		},
+	}
+	m.evictLocked()
+	m.calls[callID] = call
+	m.ordered = append(m.ordered, call)
+	return nil
+}
+
+// PushLiveWindow applies one derived Python analysis to a live session.
+func (m *Manager) PushLiveWindow(callID string, window sidecar.Window) (PublicCall, error) {
+	call, err := m.Get(callID)
+	if err != nil {
+		return PublicCall{}, err
+	}
+	call.mu.RLock()
+	status := call.public.Status
+	lastChunk := call.public.ChunksProcessed
+	opts := call.opts
+	call.mu.RUnlock()
+	if status != "streaming" {
+		return PublicCall{}, fmt.Errorf("call is not streaming")
+	}
+	if window.ChunkIndex <= lastChunk {
+		return PublicCall{}, ErrOutOfOrder
+	}
+	if skipped := window.ChunkIndex - lastChunk - 1; skipped > 0 {
+		call.mu.Lock()
+		call.public.DroppedChunks += skipped
+		call.mu.Unlock()
+	}
+	m.foldWindow(call, window, opts)
+	return call.Public(), nil
+}
+
+// FinishLive completes a live call and emits the same summary/audit event as fixture streaming.
+func (m *Manager) FinishLive(callID string) (Summary, error) {
+	call, err := m.Get(callID)
+	if err != nil {
+		return Summary{}, err
+	}
+	call.mu.RLock()
+	alreadyFinished := call.public.Status != "streaming"
+	existing := call.public.SessionSummary
+	call.mu.RUnlock()
+	if alreadyFinished && existing != nil {
+		return *existing, nil
+	}
+	call.finish(m)
+	call.mu.RLock()
+	defer call.mu.RUnlock()
+	if call.public.SessionSummary != nil {
+		return *call.public.SessionSummary, nil
+	}
+	return call.summaryLocked(m.pack), nil
 }
 
 // evictLocked drops the oldest finished call once the history cap is reached.
