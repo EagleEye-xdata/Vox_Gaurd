@@ -166,3 +166,138 @@ def test_generated_tts_samples_are_marked_as_fixtures(tmp_path, monkeypatch):
     with TestClient(main.app) as client:
         item = next(row for row in client.get('/api/v1/audio').json() if row['filename'] == sample.name)
         assert item['fixture'] is True
+
+
+def test_detector_output_range_is_attainable():
+    """DEF-1 regression. A detector term whose declared range cannot be reached is DR-003 one
+    layer below the fusion: it silently caps the session score and makes HIGH unreachable."""
+    from app.detection import classifier
+    synthetic = classifier.score_features(
+        {'spectral_flatness': 1e-7, 'pitch_cv': 0., 'jitter': 0., 'shimmer': 0.})
+    genuine = classifier.score_features(
+        {'spectral_flatness': 0.5, 'pitch_cv': .6, 'jitter': .3, 'shimmer': .5})
+    assert synthetic['synthetic_score'] >= 0.9, 'upper range unreachable'
+    assert genuine['synthetic_score'] <= 0.1, 'lower range unreachable'
+    for name in ('spectral_score', 'prosody_score'):
+        assert synthetic[name] >= 0.9 and genuine[name] <= 0.1, f'{name} range unreachable'
+
+
+def test_phase0_high_is_reachable_from_the_detector_alone():
+    """T-2.3 end to end. The unit test proves the fusion maths; this proves the whole pipeline
+    from a real WAV, which is what the Phase 0 exit gate in 12-BUILD_CHECKLIST actually asks for."""
+    import soundfile as sf
+    from generate_fixtures import generate
+    from app.main import analyze
+    generate()
+    audio, sr = sf.read('../demo_audio/fixture-steady.wav', dtype='float32')
+    result = analyze(audio[:sr*3].copy())
+    assert result['scored']
+    detection = {**result, 'p_synthetic': result['synthetic_score']}
+    window = score_window(detection, None)
+    assert window['band'] == 'HIGH', f"detector-only band was {window['band']} at {window['window_score']}"
+    assert window['window_score'] >= 75, 'HIGH reached with no margin; it will drift back to MEDIUM'
+
+
+def test_pitch_outliers_do_not_dominate_prosody():
+    """A YIN octave error on one frame inflated pitch_cv from ~0 to 0.14 on a constant tone."""
+    t = np.arange(48000)/16000
+    prepared = preprocess((.25*np.sin(2*np.pi*170*t)).astype(np.float32))
+    assert prepared is not None
+    assert extract(prepared[0])['pitch_cv'] < 0.02
+
+
+def test_context_failure_lowers_the_high_threshold():
+    """T-4.3 / 03 section 6 (DEF-4). A score built without context evidence gets less benefit of
+    the doubt, so high_min drops by degraded_threshold_delta."""
+    from app.risk_scoring import band_for
+    assert band_for(62, POLICY, context_degraded=False) == 'MEDIUM'
+    assert band_for(62, POLICY, context_degraded=True) == 'HIGH'
+    missing = score_window(detection(.9, .95), None)
+    assert missing['context_degraded'] is True
+    present = score_window(detection(.9, .95), {'caller_attestation': 'UNKNOWN'})
+    assert present['context_degraded'] is False
+
+
+def test_session_band_honours_the_degraded_threshold():
+    """The window's delta must follow through to the session, or window and session disagree."""
+    degraded = SessionRisk('degraded')
+    for _ in range(3):
+        verdict = degraded.update({'window_score': 63, 'applied_floors': [], 'context_degraded': True})
+    assert verdict['band'] == 'HIGH'
+    normal = SessionRisk('normal')
+    for _ in range(3):
+        verdict = normal.update({'window_score': 63, 'applied_floors': [], 'context_degraded': False})
+    assert verdict['band'] == 'MEDIUM'
+
+
+def test_unsupported_language_gates_the_detector_off(tmp_path, monkeypatch):
+    """T-6.6 / DR-023 (DEF-2). An unsupported language must never be scored as if in scope."""
+    from fastapi.testclient import TestClient
+    from app import main
+    from generate_fixtures import generate
+    generate()
+    monkeypatch.setattr(main, 'ledger', Ledger(tmp_path/'lang.db'))
+    main.calls.clear(); main.alerts.clear()
+    with TestClient(main.app) as client:
+        call_id = client.post('/api/v1/stream/start', json={
+            'filename': 'fixture-steady.wav', 'interval': .05, 'language': 'fr'}).json()['call_id']
+        with client.websocket_connect(f'/ws/audio/{call_id}') as ws:
+            while ws.receive_json()['type'] != 'complete':
+                pass
+        call = client.get(f'/api/v1/risk-score/{call_id}').json()
+    assert call['latest']['language_supported'] is False
+    assert 'ai' in call['latest']['inactive_signals']
+    assert {'reason': 'unsupported_language', 'value': 40} in call['applied_floors']
+    assert call['band'] in {'MEDIUM', 'HIGH'}, 'out-of-scope language must never read as LOW'
+
+
+def test_simulated_adversarial_input_reaches_the_floor(tmp_path, monkeypatch):
+    """T-2.2 end to end (DEF-3). The floor-55 path was dead code outside unit tests."""
+    from fastapi.testclient import TestClient
+    from app import main
+    from generate_fixtures import generate
+    generate()
+    monkeypatch.setattr(main, 'ledger', Ledger(tmp_path/'adv.db'))
+    main.calls.clear(); main.alerts.clear()
+    with TestClient(main.app) as client:
+        call_id = client.post('/api/v1/stream/start', json={
+            'filename': 'fixture-variable.wav', 'interval': .05,
+            'simulate_adversarial_input': True}).json()['call_id']
+        with client.websocket_connect(f'/ws/audio/{call_id}') as ws:
+            while ws.receive_json()['type'] != 'complete':
+                pass
+        call = client.get(f'/api/v1/risk-score/{call_id}').json()
+    assert call['latest']['adversarial_flag_source'] == 'simulated'
+    assert {'reason': 'adversarial_input', 'value': 55} in call['applied_floors']
+    assert call['latest']['window_score'] >= 55
+
+
+def test_policy_version_no_longer_claims_to_be_the_banking_pack():
+    """DEF-5. The weights are not 03 section 7's banking pack; the name must not say they are."""
+    assert 'banking' not in POLICY['version']
+    assert POLICY['weights'] != {'ai': 0.45, 'speaker': 0.30, 'context': 0.25}
+
+
+def test_consent_log_gates_every_human_voice_file():
+    """Invariant 14 / 06 section 0. A promise in a document is not a control. Any .wav in
+    demo_audio/ that is not a machine-generated fixture must trace to a signed row in
+    docs/CONSENT_LOG.md, or this fails and the recording does not ship."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    log = (root/'docs'/'CONSENT_LOG.md').read_text(encoding='utf-8')
+    consented = set(re.findall(r'^\|\s*(P-\d+)\s*\|', log, re.MULTILINE))
+    revoked = set(re.findall(r'^\|\s*(P-\d+)\s*\|[^|]*\|[^|]*\|[^|]*\|[^|]*\|\s*yes\s*\|',
+                             log, re.MULTILINE))
+    offenders = []
+    for wav in (root/'demo_audio').glob('*.wav'):
+        if wav.name.startswith(('fixture-', 'tts-')):
+            continue                                    # machine-generated, no person involved
+        matched = re.match(r'consented-(P-\d+)-', wav.name)
+        if not matched:
+            offenders.append(f'{wav.name}: no consent-log reference in the filename')
+        elif matched.group(1) not in consented:
+            offenders.append(f'{wav.name}: {matched.group(1)} has no row in docs/CONSENT_LOG.md')
+        elif matched.group(1) in revoked:
+            offenders.append(f'{wav.name}: {matched.group(1)} revoked consent; delete this file')
+    assert not offenders, 'Unconsented voice audio present: ' + '; '.join(offenders)

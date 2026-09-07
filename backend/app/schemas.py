@@ -29,6 +29,12 @@ class Start(StrictModel):
     context: Context = Field(default_factory=Context)
     interval: float = Field(default=1, ge=0.05, le=4)
     simulate_detector_failure: bool = False
+    # Operator-asserted, not detected. We run no language ID, so claiming detection would be a
+    # false capability claim. An unsupported value gates the AI signal off and applies floor 40
+    # per 05 section 4 / DR-023, which is what makes T-6.6 demonstrable. See docs/HANDOFF.md DEF-2.
+    language: str = Field(default="en", pattern="^[a-z]{2}(-[a-z]{2})?$")
+    # Simulated, never detected. Real adversarial input-sanity checking is Phase 2 (05 section 6).
+    simulate_adversarial_input: bool = False
 
 class AudioChunk(StrictModel):
     samples: list[float] = Field(min_length=4000, max_length=64000)
@@ -48,5 +54,5 @@ class LedgerEvent(StrictModel):
     event_type: str = Field(pattern="^(observation|alert|escalation|call_completed)$")
     risk_score: float = Field(ge=0, le=100)
     band: str = Field(default="UNKNOWN", pattern="^(LOW|MEDIUM|HIGH|UNKNOWN)$")
-    policy_version: str = Field(default="banking-demo@2.0.0", max_length=80)
+    policy_version: str = Field(default="demo-detector-first@2.1.0", max_length=80)
     model_versions: dict[str, str] = Field(min_length=1)

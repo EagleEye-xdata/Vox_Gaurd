@@ -3,8 +3,12 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from math import log10
 
+# NOT the 03 section 7 banking pack (ai .45 / speaker .30 / context .25, bands 35/65,
+# mandatory_speaker_verification true). Named honestly: these weights are tuned for a
+# detector-first Phase 0 with no speaker enrolment, where the banking pack's mandatory-verification
+# floor of 50 would pin every window to Elevated. Deviation DEV-1 in docs/HANDOFF.md.
 POLICY = {
-    "version": "banking-demo@2.0.0",
+    "version": "demo-detector-first@2.1.0",
     "weights": {"ai": 0.60, "speaker": 0.20, "context": 0.20},
     "context_weights": {"attestation": 0.25, "urgency": 0.15, "history": 0.20, "transaction": 0.40},
     "bands": {"medium_min": 40, "high_min": 70},
@@ -13,6 +17,10 @@ POLICY = {
     "min_confidence": 0.35,
     "min_voiced_seconds": 3.0,
     "default_degraded_decision": "WARN",
+    # 03 section 6: with context missing we cannot afford the usual HIGH threshold, so lower it.
+    "degraded_threshold_delta": 10,
+    # 05 section 4: the languages this build claims. Anything else gates the AI signal off.
+    "supported_languages": ["en", "hi", "ta", "te", "bn", "hi-en"],
     "ewma_alpha": 0.35,
     "peak_decay": 0.98,
     "peak_discount": 8,
@@ -21,10 +29,13 @@ POLICY = {
 BAND_RANK = {"UNKNOWN": -1, "LOW": 0, "MEDIUM": 1, "HIGH": 2}
 
 
-def band_for(score, policy=POLICY):
+def band_for(score, policy=POLICY, context_degraded=False):
     if score is None:
         return "UNKNOWN"
-    if score >= policy["bands"]["high_min"]:
+    # 03 section 6: under Context-Service failure high_min drops by degraded_threshold_delta,
+    # because a score built without context evidence deserves less benefit of the doubt.
+    high_min = policy["bands"]["high_min"] - (policy["degraded_threshold_delta"] if context_degraded else 0)
+    if score >= high_min:
         return "HIGH"
     if score >= policy["bands"]["medium_min"]:
         return "MEDIUM"
@@ -161,11 +172,13 @@ def score_window(detection, context, verification=None, policy=POLICY):
 
 
 def _result(score, base, trust_discount, active, inactive, floors, factors, context_details, degraded, reasons, policy):
+    context_degraded = "context_unavailable" in reasons
     return {
         "window_score": score,
         "base_score": base,
         "trust_discount": trust_discount,
-        "band": band_for(score, policy),
+        "band": band_for(score, policy, context_degraded),
+        "context_degraded": context_degraded,
         "active_signals": list(active),
         "inactive_signals": list(inactive),
         "inactive_reasons": inactive,
@@ -193,26 +206,31 @@ class SessionRisk:
         value = window["window_score"]
         if value is None:
             return self.snapshot(False)
+        # The window's threshold delta (03 section 6) must follow through to the session band,
+        # otherwise the window says HIGH and the session quietly disagrees.
+        context_degraded = window.get("context_degraded", False)
+        band_of = lambda v: band_for(v, policy, context_degraded)
         alpha = policy["ewma_alpha"]
         self.ewma = value if self.ewma is None else alpha * value + (1 - alpha) * self.ewma
         self.peak = max(self.peak * policy["peak_decay"], value)
         self.score = round(max(self.ewma, self.peak - policy["peak_discount"]), 2)
         self.history.append(self.score)
-        candidate, previous = band_for(self.score, policy), self.band
+        candidate, previous = band_of(self.score), self.band
         immediate = any(f["reason"] in {"adversarial_input", "replay_suspected"} for f in window["applied_floors"])
         if self.band == "UNKNOWN":
             if candidate == "LOW":
                 self.band = "LOW"
-            elif immediate or sum(BAND_RANK[band_for(v, policy)] >= BAND_RANK["MEDIUM"] for v in self.history[-3:]) >= 2:
+            elif immediate or sum(BAND_RANK[band_of(v)] >= BAND_RANK["MEDIUM"] for v in self.history[-3:]) >= 2:
                 self.band = "MEDIUM"
         elif BAND_RANK[candidate] > BAND_RANK[self.band]:
             next_band = "MEDIUM" if self.band == "LOW" else "HIGH"
-            qualifying = sum(BAND_RANK[band_for(v, policy)] >= BAND_RANK[next_band] for v in self.history[-3:])
+            qualifying = sum(BAND_RANK[band_of(v)] >= BAND_RANK[next_band] for v in self.history[-3:])
             if immediate or qualifying >= 2:
                 self.band = next_band
         elif BAND_RANK[candidate] < BAND_RANK[self.band] and len(self.history) >= 6:
             lower = "LOW" if self.band == "MEDIUM" else "MEDIUM"
-            ceiling = policy["bands"]["medium_min"] if lower == "LOW" else policy["bands"]["high_min"]
+            ceiling = policy["bands"]["medium_min"] if lower == "LOW" else (
+                policy["bands"]["high_min"] - (policy["degraded_threshold_delta"] if context_degraded else 0))
             if sum(v < ceiling - 5 for v in self.history[-6:]) >= 5:
                 self.band = lower
         changed = self.band != previous

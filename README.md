@@ -57,6 +57,11 @@ Optional: run `./backend/generate_speech_samples.ps1` from any directory to crea
 | Ledger | SQLite WAL with FULL synchronous writes and a SHA-256 chain over canonical event JSON followed by the previous hash |
 | Frontend | React, Tailwind/Vite, local fonts, WebSocket result replay, polling recovery |
 
+`language` is **operator-asserted, not detected** — this build runs no language identification, and
+a value outside the supported set (`en, hi, ta, te, bn, hi-en`) gates the detector signal off and
+applies the 40-point floor rather than scoring out-of-scope audio. `simulate_adversarial_input` is
+**simulated, not detected**; real adversarial input-sanity checking is Phase 2.
+
 Risk is **0–100, higher means more verification is required**. LOW is 0–39, MEDIUM is 40–69, HIGH is 70–100, and UNKNOWN has no numeric score and appears as **Not assessed**. The REAL/SYNTHETIC window label is an uncalibrated heuristic indication only. Speaker match is `null` / not enrolled, never a fabricated measurement. Spectral peaks are explicitly not validated LPC formants; jitter/shimmer are frame proxies, not clinical measurements.
 
 ## API contract
@@ -65,7 +70,7 @@ All paths from the build prompt are implemented:
 
 | Method | Path | Body / behavior |
 |---|---|---|
-| POST | `/api/v1/stream/start` | `{filename,label,context:{caller_attestation,attestation_source,transaction_value,beneficiary_is_new,request_urgency,urgency_source},interval:1,simulate_detector_failure:false}` → call_id |
+| POST | `/api/v1/stream/start` | `{filename,label,context:{caller_attestation,attestation_source,transaction_value,beneficiary_is_new,request_urgency,urgency_source},interval:1,simulate_detector_failure:false,language:"en",simulate_adversarial_input:false}` → call_id |
 | WS | `/ws/audio/{call_id}` | Replays derived chunk events, then streams live; ends with `complete` |
 | POST | `/api/v1/detect` | `{samples:[...],sample_rate:16000}`; 4,000–64,000 finite normalized float samples |
 | POST | `/api/v1/risk-score` | `{spectral_score,prosody_score,speaker_match_score:null,context:{...}}`; scores in [0,1] |

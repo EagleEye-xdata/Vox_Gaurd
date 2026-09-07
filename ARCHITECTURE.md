@@ -216,7 +216,8 @@ WAV File (demo_audio/)
       ▼ features.extract()           [Python / NumPy / Librosa / SciPy]
       │  • 40-band log-mel spectrogram (FFT 512, hop 160)
       │  • 13-coefficient MFCCs
-      │  • YIN pitch estimator (fmin=65 Hz, fmax=450 Hz)
+      │  • YIN pitch estimator (fmin=65 Hz, fmax=450 Hz), octave-error outliers
+      │    beyond ±0.5 octave of the median rejected
       │  • RMS envelope (96 segments)
       │  • Jitter  = mean(|Δpitch|) / mean(pitch)
       │  • Shimmer = mean(|ΔRMS|) / mean(RMS)
@@ -224,7 +225,8 @@ WAV File (demo_audio/)
       │  • Top-3 spectral peaks (200–3500 Hz)
       │
       ▼ detection.HeuristicClassifier.score_features()   [Python]
-      │  • spectral_score  = clip(0.3 + (0.015 − flatness)×12,  0.1, 0.9)
+      │  • tonality       = log-axis map of Wiener entropy over [3e-2, 1e-6]
+      │  • spectral_score  = clip(0.05 + 0.90×tonality, 0.05, 0.95)
       │  • prosody_score   = clip(0.95 − 2.4×pitch_cv − 2×jitter − 0.35×shimmer, 0.05, 0.95)
       │  • synthetic_score = 0.55×spectral + 0.45×prosody
       │  • classification  → "SYNTHETIC" if >= 0.5 else "REAL"

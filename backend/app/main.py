@@ -30,7 +30,10 @@ async def lifespan(app):
 app = FastAPI(title="VoiceShield AI", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
 
-def analyze(audio):
+def analyze(audio, language="en", adversarial=False):
+    """`language` is operator-asserted, not detected: this build runs no language ID, and claiming
+    otherwise would be a false capability claim (05 section 4). `adversarial` is simulated, not
+    detected; real input-sanity checking is Phase 2 (05 section 6)."""
     started = time.perf_counter()
     processed = None
     try:
@@ -44,7 +47,8 @@ def analyze(audio):
         confidence = round(min(0.95, max(0.35, 0.35 + 0.35 * speech_ratio + 0.25 * pitch_coverage)), 4)
         return {"scored": True, **scores, "p_synthetic": scores["synthetic_score"],
                 "p_synthetic_raw": scores["synthetic_score"], "confidence": confidence,
-                "language": "und", "language_supported": True, "adversarial_flag": False,
+                "language": language, "language_supported": language in POLICY["supported_languages"],
+                "adversarial_flag": adversarial, "adversarial_flag_source": "simulated" if adversarial else "none",
                 "voiced_seconds": round(speech_ratio * 3.0, 3), "features": features, "speech_ratio": speech_ratio,
                 "latency_ms": round((time.perf_counter()-started)*1000, 2)}
     finally:
@@ -84,7 +88,7 @@ async def run_call(call, path, interval):
         for index, audio in enumerate(source, 1):
             if call["status"] == "stopped":
                 break
-            result = await asyncio.to_thread(analyze, audio)
+            result = await asyncio.to_thread(analyze, audio, call["language"], call["simulate_adversarial_input"])
             call["chunks_processed"] = index
             call["latency_ms"] = result["latency_ms"]
             if result["scored"]:
@@ -169,6 +173,8 @@ async def start(body: Start):
             "degraded": False, "degraded_reasons": [], "contributing_factors": [], "applied_floors": [],
             "policy_version": POLICY["version"], "model_versions": model_versions,
             "simulate_detector_failure": body.simulate_detector_failure,
+            "language": body.language, "language_supported": body.language in POLICY["supported_languages"],
+            "simulate_adversarial_input": body.simulate_adversarial_input,
             "band_timeline": [{"window": 0, "band": "UNKNOWN"}]}
     calls[call_id] = call
     task = asyncio.create_task(run_call(call, path, body.interval))

@@ -1,20 +1,45 @@
-# MVP verification — 6 September 2026
+# Verification record
 
-## Automated checks
+> Every row states the command, the date it was run, and the observed result. Numbers here are
+> **observations on one machine**, never guarantees. If you change code, re-run and update this
+> file — a stale verification record is worse than none.
 
-- `python -m pytest tests -q`: **7 passed**. Two third-party TestClient deprecation warnings; no application failures.
-- `npm run build`: **passed**, React/Vite production bundle generated.
-- `git diff --check`: **passed**.
-- Variable test signal CLI: 8/8 scored windows, finite pitch/jitter/shimmer features. One observed run took 972 ms for cold initialization and approximately 7–8 ms per subsequent window. These are observations from this machine, not latency guarantees.
+## Run — 7 September 2026
 
-## Browser checks
+Machine: Windows 11, Python 3.11.9, i7-13620H, RTX 4060 Laptop (unused by these tests).
 
-- Local backend connection, source picker, simulation start, live updates, completion.
-- Steady test signal: 8 scored windows, sustained-risk alert, local escalation, verifiable ledger entries.
-- Visible notification recommends callback/MFA and explicitly says the call has not been blocked.
-- REAL/SYNTHETIC output is labelled heuristic. Speaker match remains unavailable until enrollment.
-- Checked layouts at 320, 375, 414, and 768 CSS pixels, plus the default desktop viewport; no horizontal document overflow observed.
-- Mobile navigation exposes monitor, pipeline, ledger, and guide.
-- RMS waveform and risk-history chart render from actual derived results.
+| Check | Command | Result |
+|---|---|---|
+| Backend test suite | `python -m pytest tests -q` (from `backend/`) | **23 passed**, 1 third-party deprecation warning (librosa `resources.path`). No application failures. |
+| Consent gate bites | Dropped an unreferenced `.wav` into `demo_audio/`, re-ran `-k consent` | **Failed as designed**: `Unconsented voice audio present: someones-voice.wav: no consent-log reference in the filename`. File removed; suite green again. |
+| Detector range | `test_detector_output_range_is_attainable` | `p_synthetic` spans **0.05 – 0.95**; both ends reachable. |
+| Phase 0 exit gate | `test_phase0_high_is_reachable_from_the_detector_alone` | `fixture-steady.wav` → **90.95, band HIGH from the detector alone** (21-point margin over the 70 threshold). |
 
-No genuine/cloned speech benchmark was supplied. These checks establish pipeline behavior only, not spoof-detection performance.
+### Measured pipeline values (`fixture-steady.wav`, first 3 s window)
+
+| Quantity | Before DEF-1 fix | After |
+|---|---|---|
+| `spectral_flatness` | 1.4e-06 | 1.4e-06 (unchanged — the input, not the bug) |
+| `spectral_score` | 0.48 (constant for **every** input) | **0.9196** |
+| `pitch_cv` | 0.1355 | **0.0001** |
+| `prosody_score` | 0.5979 | **0.945** |
+| `p_synthetic` | 0.5331 | **0.9311** |
+| Detector-only window score | 68.19 ceiling → MEDIUM | **90.95 → HIGH** |
+
+`fixture-variable.wav` → 69.21 MEDIUM detector-only, 71.38 HIGH with transaction context. The
+steady-vs-variable contrast the demo narrative relies on is preserved.
+
+## Not yet verified
+
+- `npm run build` — not re-run this session (`node_modules` not installed).
+- Browser walkthrough — not re-run this session.
+- **No genuine-vs-cloned speech benchmark exists yet.** These checks establish pipeline behaviour
+  only, **not spoof-detection performance**. There is no measured FAR/FRR, no EER, and no
+  calibration. Any accuracy claim at this point would be fabricated.
+
+## History
+
+| Date | Result |
+|---|---|
+| 2026-09-07 | 23 passed. DEF-1…DEF-6 fixed; consent gate added and proven to bite. |
+| 2026-09-06 | 7 passed. Superseded — the suite has since grown to 23 and one test was failing when re-run on 09-07 (see DEF-1). |
