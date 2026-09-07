@@ -173,7 +173,7 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
         .catch((err) => console.log("Mic permission optional/denied:", err));
     }
 
-    // Setup Speech Recognition for Natural Human Speech Input
+    // Setup Speech Recognition for Natural Continuous Voice Input (Hands-Free)
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
       try {
@@ -193,7 +193,18 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
         };
 
         recognition.onerror = (e) => {
-          console.log("Speech recognition notice:", e.error);
+          if (e.error !== "no-speech") {
+            console.log("Speech recognition status:", e.error);
+          }
+        };
+
+        // Auto restart recognition when browser drops connection so mic stays continuously listening
+        recognition.onend = () => {
+          if (!isCancelled && callStatus === "connected" && !isMuted) {
+            try {
+              recognition.start();
+            } catch (_) {}
+          }
         };
 
         recognition.start();
@@ -546,6 +557,24 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
               </div>
             </div>
           </div>
+
+          {/* Hands-Free Voice Prompt Banner */}
+          {callStatus === "connected" && (
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              background: "rgba(16, 185, 129, 0.1)",
+              border: "1px solid rgba(16, 185, 129, 0.25)",
+              borderRadius: "8px",
+              padding: "6px 12px",
+              fontSize: "12px",
+              color: "#34d399",
+            }}>
+              <span className="twoway-pulse-dot" style={{ background: "#10b981", width: 6, height: 6 }} />
+              <strong>Hands-Free Voice Mode Active:</strong> Direct mic me bolo — typing ya click karne ki zaroorat nahi hai!
+            </div>
+          )}
 
           {/* Interactive Chat / Dialogue History */}
           <div className="twoway-transcript">
