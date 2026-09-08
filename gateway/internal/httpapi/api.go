@@ -63,6 +63,7 @@ func (s *Server) Routes() http.Handler {
 	// Audio in flight only: these two stream their bodies to the Python sidecar unparsed.
 	mux.HandleFunc("POST /api/v1/detect", s.proxyDetect)
 	mux.HandleFunc("POST /api/v1/enrolments", s.proxyEnrol)
+	mux.HandleFunc("POST /api/v1/tts/speak", s.proxySpeak)
 	mux.HandleFunc("GET /api/v1/enrolments", s.listEnrolments)
 	mux.HandleFunc("DELETE /api/v1/enrolments/{identity_id}", s.revokeEnrolment)
 
@@ -389,6 +390,19 @@ func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
 // proxyDetect streams POST /api/v1/detect to the sidecar without decoding the samples.
 func (s *Server) proxyDetect(w http.ResponseWriter, r *http.Request) {
 	s.Sidecar.Proxy(w, r, "/internal/analyse")
+}
+
+// proxySpeak streams POST /api/v1/tts/speak to the sidecar.
+//
+// The response carries generated demo audio, so unlike the other proxied routes it is a body the
+// gateway is *meant* to pass back. It is still streamed, not decoded: the gateway has no reason
+// to hold a waveform in a Go value, and keeping it out of one keeps the audio boundary in
+// docs/01-ARCHITECTURE.md section 2 exactly where it is for every other route.
+//
+// Scoring happens in the sidecar, next to the detector, so there is no path by which a gateway
+// change could put a number in front of an operator that no model produced.
+func (s *Server) proxySpeak(w http.ResponseWriter, r *http.Request) {
+	s.Sidecar.Proxy(w, r, "/internal/tts/speak")
 }
 
 // proxyEnrol streams POST /api/v1/enrolments to the sidecar without decoding the samples.

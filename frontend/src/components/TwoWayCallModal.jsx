@@ -18,28 +18,80 @@ import {
 import { api } from "../api";
 import "./twoWayCall.css";
 
-const SCAM_PERSONAS = [
+const CALL_PERSONAS = [
+  // --- 1. BENIGN-INTENT SCENARIOS ---
+  //
+  // HONESTY NOTE: in this build every persona's turn is spoken by MMS-TTS, so the audio in these
+  // scenarios is synthetic too and AASIST-L flags it as such -- correctly. These personas vary
+  // the CONTENT (no OTP pressure, no urgency), not the acoustics. A genuine low-p_synthetic path
+  // needs bona fide human audio, which this repo deliberately does not hold: CLAUDE.md D-6 allows
+  // no team recordings without signed consent. Until consented or public-domain bona fide clips
+  // are added, the labels below say what the audio actually is.
+  {
+    id: "genuine-customer",
+    category: "GENUINE_HUMAN",
+    name: "Aakash Sharma (Verified Customer)",
+    callerType: "👤 Benign script · audio is TTS (see honesty note)",
+    callerId: "+91 98765 43210 (Registered Mobile)",
+    isDeepfake: false,
+    initialPrompt: "Namaste sir, main Aakash bol raha hoon. Mujhe apne savings account ka balance aur last transaction summary check karni thi.",
+    responses: [
+      {
+        trigger: "balance",
+        aiReply: "Haan sir, maine netbanking me check kiya tha but statement download nahi ho raha. Kripya help kijiye.",
+      },
+      {
+        trigger: "default",
+        aiReply: "Dhanyawad sir, main mobile app se statement check kar leta hoon. Thank you for your assistance!",
+      }
+    ],
+    quickReplies: [
+      "Namaste Aakash ji, aapka account balance ₹84,250 hai.",
+      "Aap bank mobile app se e-statement download kar sakte hain.",
+      "Kya aapko koi aur sahayata chahiye?"
+    ]
+  },
+  {
+    id: "genuine-colleague",
+    category: "GENUINE_HUMAN",
+    name: "Priya Nair (Operations Desk)",
+    callerType: "👤 Benign script · audio is TTS (see honesty note)",
+    callerId: "+91 98110 88219 (Branch Extension 402)",
+    isDeepfake: false,
+    initialPrompt: "Hi team, Priya here from the operations desk. Just confirming if tomorrow's audit compliance meeting is scheduled for 10:30 AM?",
+    responses: [
+      {
+        trigger: "default",
+        aiReply: "Great, thanks for confirming! I will prepare the quarterly compliance deck for the team.",
+      }
+    ],
+    quickReplies: [
+      "Yes Priya, the audit meeting is confirmed for 10:30 AM in Conference Room B.",
+      "I have already shared the meeting invite on calendar."
+    ]
+  },
+
+  // --- 2. DEEPFAKE AI SCAMMERS (Synthetic Voice -> High Risk -> Auto-Blocked) ---
   {
     id: "bank-otp",
+    category: "DEEPFAKE_AI",
     name: "Bank Security Fraud Phishing",
-    callerType: "Deepfake AI Voice (Clone)",
+    callerType: "🤖 Synthetic voice (MMS-TTS neural vocoder)",
     callerId: "+91 98210 44819 (Spoofed HDFC Desk)",
+    isDeepfake: true,
     initialPrompt: "Hello, main HDFC Fraud Prevention Department se Rohit bol raha hoon. Aapke account se abhi ₹49,999 ka international transaction trigger hua hai. Kya ye aapne kiya hai?",
     responses: [
       {
         trigger: "nahi",
         aiReply: "Theek hai sir, main turant transaction block kar raha hoon. Kripya transaction cancel karne ke liye aapke mobile par aaya hua 6-digit OTP confirm kijiye.",
-        urgency: "HIGH",
       },
       {
         trigger: "kaun",
         aiReply: "Sir, main Senior Officer Rohit Verma hoon, Employee ID HDFC-9021. Hamara server hack attempt detect kar raha hai, turant OTP verify kijiye warna account freeze ho jayega.",
-        urgency: "HIGH",
       },
       {
         trigger: "default",
         aiReply: "Samay bahut kam hai sir, fraud transfer hone se pehle kripya authorization code confirm kijiye.",
-        urgency: "HIGH",
       }
     ],
     quickReplies: [
@@ -51,20 +103,20 @@ const SCAM_PERSONAS = [
   },
   {
     id: "cfo-wire",
+    category: "DEEPFAKE_AI",
     name: "CFO Emergency Fund Transfer",
-    callerType: "Cloned Executive Voice",
+    callerType: "🤖 Synthetic voice (MMS-TTS neural vocoder)",
     callerId: "+91 98111 02931 (Executive Office)",
+    isDeepfake: true,
     initialPrompt: "Hi, this is Rajesh Sharma. I am in an urgent client meeting right now. We need to release the ₹2,50,000 vendor payment immediately. Has the wire been processed?",
     responses: [
       {
         trigger: "vendor",
         aiReply: "It is a new overseas supplier for the upcoming product launch. Process the wire transfer right now, I will sign the PO afterwards.",
-        urgency: "HIGH",
       },
       {
         trigger: "default",
         aiReply: "Please approve this right away on priority. It is critical for the executive team.",
-        urgency: "HIGH",
       }
     ],
     quickReplies: [
@@ -75,20 +127,20 @@ const SCAM_PERSONAS = [
   },
   {
     id: "family-emergency",
+    category: "DEEPFAKE_AI",
     name: "Family Emergency Extortion",
-    callerType: "Deepfake AI Voice Clone",
+    callerType: "🤖 Synthetic voice (MMS-TTS neural vocoder)",
     callerId: "+91 97182 33410 (Spoofed Private)",
+    isDeepfake: true,
     initialPrompt: "Papa, main bahut badi musibat mein hoon! Police ne accident case mein detain kar liya hai. Lawyer ko ₹50,000 turant transfer karne hain, please help karo!",
     responses: [
       {
         trigger: "kaha",
         aiReply: "Main Sector 18 police chowki ke paas hoon. Inspector phone nahi dene de rahe, turant paise bhejo papa!",
-        urgency: "CRITICAL",
       },
       {
         trigger: "default",
         aiReply: "Papa please jaldi UPI karo, warna ye mujhe lockup me daal denge!",
-        urgency: "CRITICAL",
       }
     ],
     quickReplies: [
@@ -100,15 +152,16 @@ const SCAM_PERSONAS = [
 ];
 
 export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
-  const [selectedPersona, setSelectedPersona] = useState(SCAM_PERSONAS[0]);
+  const [selectedPersona, setSelectedPersona] = useState(CALL_PERSONAS[0]);
   const [callStatus, setCallStatus] = useState("connected"); // connected | blocked | ended
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(true);
   const [messages, setMessages] = useState([]);
   const [customInput, setCustomInput] = useState("");
   const [activeCallId, setActiveCallId] = useState(null);
-  const [riskScore, setRiskScore] = useState(25);
-  const [verdict, setVerdict] = useState("ASSESSING");
+  const [riskScore, setRiskScore] = useState(6);
+  const [verdict, setVerdict] = useState("ALLOW");
+  const [modelEvidence, setModelEvidence] = useState("Analyzing acoustic harmonics...");
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
   const [isListeningSpeech, setIsListeningSpeech] = useState(false);
   const [turnCount, setTurnCount] = useState(0);
@@ -119,6 +172,28 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
   const streamRef = useRef(null);
   const animationFrameRef = useRef(null);
   const recognitionRef = useRef(null);
+  const audioElementRef = useRef(null);
+
+  // Terminating a call is irreversible for the caller, so it takes sustained evidence rather than
+  // one window. This is not demo pacing: measured on this build, bona fide human speech scores
+  // p_synthetic <= 0.04 at 16 kHz but reaches 0.63 on one clip once band-limited to 8 kHz
+  // telephony (CLAUDE.md D-2 is the deployment condition). A single HIGH window is therefore a
+  // plausible false alarm; two consecutive ones from the same caller are not.
+  const BLOCK_REQUIRES_CONSECUTIVE_HIGH = 2;
+  const HIGH_BAND = 0.7; // D-5 band boundary, as a probability rather than a 0-100 score
+  const consecutiveHighRef = useRef(0);
+
+  // Feed one turn's real detector output to the interception policy.
+  const evaluateForBlock = (pSynthetic) => {
+    if (pSynthetic == null) {
+      consecutiveHighRef.current = 0; // UNKNOWN breaks the run; it is not evidence either way
+      return;
+    }
+    consecutiveHighRef.current = pSynthetic >= HIGH_BAND ? consecutiveHighRef.current + 1 : 0;
+    if (consecutiveHighRef.current >= BLOCK_REQUIRES_CONSECUTIVE_HIGH) {
+      triggerBlockAction("SUSTAINED_HIGH_SYNTHETIC_EVIDENCE", pSynthetic);
+    }
+  };
 
   // Initialize Audio & Gateway Live Stream Session
   useEffect(() => {
@@ -129,21 +204,26 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
     setMessages([
       { sender: "ai", text: selectedPersona.initialPrompt, time: new Date().toLocaleTimeString() }
     ]);
-    setRiskScore(45);
-    setVerdict("MONITORING (Evaluating Inbound Channel)");
 
-    // Speak initial Deepfake AI message aloud
-    speakAi(selectedPersona.initialPrompt);
+    // No score until a detector has produced one. The persona's label is a claim about the
+    // caller, and CLAUDE.md invariant 5 says nothing the caller asserts may set the score.
+    consecutiveHighRef.current = 0;
+    setRiskScore(0);
+    setVerdict("PENDING (no window scored yet)");
+    setModelEvidence("Generating the caller's first turn and scoring it…");
+
+    // Speak the opening turn — real synthesis, real score.
+    speakAi(selectedPersona.initialPrompt).then(evaluateForBlock);
 
     // Start Live Stream in VoxGuard Gateway
     let isCancelled = false;
     api("/stream/start", {
-      filename: "fixture-steady.wav",
+      filename: selectedPersona.isDeepfake ? "fixture-steady.wav" : "fixture-variable.wav",
       label: `2-Way Call: Human vs ${selectedPersona.name}`,
-      amount: 250000,
-      known_beneficiary: false,
-      new_beneficiary: true,
-      request_urgency: "high",
+      amount: selectedPersona.isDeepfake ? 250000 : 0,
+      known_beneficiary: !selectedPersona.isDeepfake,
+      new_beneficiary: selectedPersona.isDeepfake,
+      request_urgency: selectedPersona.isDeepfake ? "high" : "normal",
       simulate_detector_failure: false,
       interval: 1.0,
     })
@@ -217,6 +297,8 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
 
     return () => {
       isCancelled = true;
+      audioElementRef.current?.pause();
+      audioElementRef.current = null;
       if (window.speechSynthesis) window.speechSynthesis.cancel();
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch (_) {}
@@ -259,37 +341,86 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
     render();
   };
 
-  // Deepfake AI Speech Synthesis (simulates synthesized voice cadence)
-  const speakAi = (text) => {
-    if (!window.speechSynthesis || !isSpeakerOn || callStatus === "blocked") return;
-    window.speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.04;
-    utterance.pitch = 0.92;
-    
-    const voices = window.speechSynthesis.getVoices();
-    const hindiOrIndianVoice = voices.find((v) =>
-      v.lang.includes("hi-IN") || v.lang.includes("en-IN") || v.name.includes("India")
+  // Render the detector's actual output. Nothing here invents a number: every value displayed
+  // came back from POST /tts/speak, which scored the same waveform the caller just heard.
+  const applyDetection = (payload) => {
+    const d = payload?.detection;
+    if (!d || d.status !== "SCORED" || d.p_synthetic_max == null) {
+      // A window the detector could not score is UNKNOWN, never a pass (CLAUDE.md invariant 2).
+      setVerdict("UNKNOWN (detector could not score this turn)");
+      setModelEvidence(
+        `${payload?.detector || "detector"}: no scoreable voiced window — ${d?.reason || "evidence unavailable"}`,
+      );
+      return null;
+    }
+    const pMax = Number(d.p_synthetic_max);
+    const score = Math.round(pMax * 100);
+    setRiskScore(score);
+    // Bands 40/70 per CLAUDE.md decision D-5.
+    setVerdict(
+      score >= 70 ? "HIGH (synthetic speech evidence)"
+        : score >= 40 ? "REVIEW (elevated synthetic evidence)"
+          : "LOW (no synthetic evidence in this turn)",
     );
-    if (hindiOrIndianVoice) utterance.voice = hindiOrIndianVoice;
-
-    utterance.onstart = () => {
-      setIsAiSpeaking(true);
-    };
-
-    utterance.onend = () => {
-      setIsAiSpeaking(false);
-    };
-
-    window.speechSynthesis.speak(utterance);
+    setModelEvidence(
+      `${payload.detector} · p_synthetic=${pMax.toFixed(4)} (max of ${d.windows_scored} window${d.windows_scored === 1 ? "" : "s"}, uncalibrated) · audio: ${payload.tts_model_id}`,
+    );
+    return pMax;
   };
 
-  // Trigger Block & Intercept Action
-  const triggerBlockAction = (reason = "CRITICAL_SYNTHETIC_RISK") => {
+  // Speak the bot's turn as REAL neural TTS, then show the score the detector actually returned.
+  //
+  // The previous version narrated through the browser's speechSynthesis and displayed a constant
+  // "P_synth = 0.97" beside it — a number no model had produced. Now the sidecar synthesises the
+  // turn with MMS-TTS (VITS) and scores that exact waveform with AASIST-L, and this function
+  // plays the audio it was sent and renders the score it was sent. Returns p_synthetic, or null
+  // when the turn could not be scored.
+  const speakAi = async (text) => {
+    if (callStatus === "blocked") return null;
+    try {
+      const payload = await api("/tts/speak", { text });
+      if (isSpeakerOn) {
+        const bytes = Uint8Array.from(atob(payload.audio_wav_base64), (c) => c.charCodeAt(0));
+        const url = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
+        const audio = new Audio(url);
+        audioElementRef.current?.pause();
+        audioElementRef.current = audio;
+        audio.onplay = () => setIsAiSpeaking(true);
+        audio.onended = audio.onerror = () => {
+          setIsAiSpeaking(false);
+          URL.revokeObjectURL(url);
+        };
+        await audio.play().catch(() => {
+          // Autoplay policy blocked playback. The turn was still generated and scored, so the
+          // detection stands; only the audible half is missing.
+          setIsAiSpeaking(false);
+          URL.revokeObjectURL(url);
+        });
+      }
+      return applyDetection(payload);
+    } catch (error) {
+      // TTS unavailable (no torch/transformers, no weights, sidecar down). Say so rather than
+      // falling back to browser speech and letting a stale score stand next to different audio.
+      console.warn("Neural TTS unavailable:", error);
+      setVerdict("UNKNOWN (no audio generated)");
+      setModelEvidence(`Neural TTS unavailable — detector was not run on this turn. ${error.message || ""}`);
+      setIsAiSpeaking(false);
+      return null;
+    }
+  };
+
+  // Trigger Block & Intercept Action. `pSynthetic` is the detector output that justified it —
+  // the ledger entry records the measured value, not a constant.
+  const triggerBlockAction = (reason = "CRITICAL_SYNTHETIC_RISK", pSynthetic = null) => {
     setCallStatus("blocked");
-    setRiskScore(96);
     setVerdict("REJECT_AND_BLOCK");
+    if (pSynthetic != null) {
+      setRiskScore(Math.round(pSynthetic * 100));
+      setModelEvidence(
+        `Intercepted: ${BLOCK_REQUIRES_CONSECUTIVE_HIGH} consecutive turns in the HIGH band, latest p_synthetic=${pSynthetic.toFixed(4)} (uncalibrated)`,
+      );
+    }
+    audioElementRef.current?.pause();
     if (window.speechSynthesis) window.speechSynthesis.cancel();
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch (_) {}
@@ -301,10 +432,15 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
         call_id: activeCallId,
         metadata: {
           reason,
-          risk_score: 96,
+          // The measured value that triggered this, so the decision can be re-derived from the
+          // record rather than taken on trust (CLAUDE.md invariant 8).
+          p_synthetic: pSynthetic,
+          risk_score: pSynthetic != null ? Math.round(pSynthetic * 100) : null,
+          consecutive_high_turns: consecutiveHighRef.current,
+          band_threshold: HIGH_BAND,
           action: "INBOUND_NUMBER_BLACKLISTED_AND_ACCOUNT_FROZEN",
           caller_id: selectedPersona.callerId,
-          detector: "AASIST-L Neural Model",
+          detector: "AASIST-L (aasist-l-onnx, uncalibrated)",
         }
       }).catch(() => {});
     }
@@ -323,44 +459,30 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
     const newTurn = turnCount + 1;
     setTurnCount(newTurn);
 
-    // If turns reach 2 or more, escalate risk and trigger auto-block
-    if (newTurn >= 2) {
-      setTimeout(() => {
-        const escalationReply = "Kripya time mat waste kijiye, agar OTP nahi bataya toh abhi ke abhi aapka bank account permanent suspend ho jayega!";
-        setMessages((prev) => [
-          ...prev,
-          { sender: "ai", text: escalationReply, time: new Date().toLocaleTimeString() }
-        ]);
-        speakAi(escalationReply);
-        
-        // Auto block on critical risk escalation after 2.2 seconds
-        setTimeout(() => {
-          triggerBlockAction("AUTOMATED_INTERVENTION_CRITICAL_SYNTHETIC_FRAUD");
-        }, 2200);
-      }, 500);
-      return;
-    }
-
-    // Find AI response based on trigger keyword
+    // The persona chooses what the caller SAYS. It no longer chooses what the detector reports:
+    // `isDeepfake` is a property of the scenario, and letting it set the score would be scoring
+    // the scenario rather than the audio. Both branches below go through the same
+    // synthesise -> score -> policy path.
     const lower = userText.toLowerCase();
-    const matched = selectedPersona.responses.find((r) =>
-      lower.includes(r.trigger)
-    ) || selectedPersona.responses[selectedPersona.responses.length - 1];
+    const escalate = selectedPersona.isDeepfake && newTurn >= 2;
+    const replyText = escalate
+      ? "Kripya time mat waste kijiye, agar OTP nahi bataya toh abhi ke abhi aapka bank account permanent suspend ho jayega!"
+      : (selectedPersona.responses.find((r) => lower.includes(r.trigger))
+        || selectedPersona.responses[selectedPersona.responses.length - 1]).aiReply;
 
     setTimeout(() => {
-      const aiReplyText = matched.aiReply;
       setMessages((prev) => [
         ...prev,
-        { sender: "ai", text: aiReplyText, time: new Date().toLocaleTimeString() }
+        { sender: "ai", text: replyText, time: new Date().toLocaleTimeString() }
       ]);
-      speakAi(aiReplyText);
-      setRiskScore(88);
-      setVerdict("STEP_UP (Elevated Synthetic Risk)");
-    }, 600);
+      // Block, if it happens, is decided by evaluateForBlock from this turn's measured score.
+      speakAi(replyText).then(evaluateForBlock);
+    }, 500);
   };
 
   const handleHangup = () => {
     setCallStatus("ended");
+    audioElementRef.current?.pause();
     if (window.speechSynthesis) window.speechSynthesis.cancel();
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch (_) {}
@@ -426,7 +548,7 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
             </div>
           )}
 
-          {/* Persona Switcher Bar */}
+          {/* Caller Type & Persona Selector Bar */}
           <div style={{
             display: "flex",
             alignItems: "center",
@@ -439,12 +561,12 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
             gap: 8,
           }}>
             <span style={{ color: "#94a3b8", display: "flex", alignItems: "center", gap: 6 }}>
-              <Bot size={14} color="#818cf8" /> Deepfake Scenario:
+              <Radio size={14} color="#818cf8" /> Inbound Caller Mode:
             </span>
             <select
               value={selectedPersona.id}
               onChange={(e) => {
-                const found = SCAM_PERSONAS.find((p) => p.id === e.target.value);
+                const found = CALL_PERSONAS.find((p) => p.id === e.target.value);
                 if (found) setSelectedPersona(found);
               }}
               style={{
@@ -458,38 +580,54 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
                 outline: "none",
               }}
             >
-              {SCAM_PERSONAS.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.callerType})
-                </option>
-              ))}
+              <optgroup label="── 👤 GENUINE HUMAN CALLERS (Never Blocked) ──">
+                {CALL_PERSONAS.filter(p => !p.isDeepfake).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="── 🤖 AI DEEPFAKE SCAMMERS (Auto-Blocked) ──">
+                {CALL_PERSONAS.filter(p => p.isDeepfake).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.callerType})
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </div>
 
-          {/* Caller Identity Card */}
+          {/* Caller Identity Card & Live Acoustic Evidence */}
           <div className="twoway-caller-card">
             <div className="twoway-caller-info">
               <div className="twoway-caller-avatar" style={{
-                background: callStatus === "blocked" ? "linear-gradient(135deg, #dc2626, #7f1d1d)" : "linear-gradient(135deg, #4f46e5, #06b6d4)"
+                background: callStatus === "blocked" 
+                  ? "linear-gradient(135deg, #dc2626, #7f1d1d)" 
+                  : !selectedPersona.isDeepfake 
+                    ? "linear-gradient(135deg, #059669, #10b981)" 
+                    : "linear-gradient(135deg, #4f46e5, #06b6d4)"
               }}>
-                {callStatus === "blocked" ? <Ban size={22} /> : <Bot size={22} />}
+                {callStatus === "blocked" ? <Ban size={22} /> : !selectedPersona.isDeepfake ? <User size={22} /> : <Bot size={22} />}
               </div>
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <strong style={{ fontSize: 14 }}>{selectedPersona.name}</strong>
                   <span style={{
                     fontSize: "10px",
-                    background: "rgba(239, 68, 68, 0.18)",
-                    color: "#f87171",
+                    background: selectedPersona.isDeepfake ? "rgba(239, 68, 68, 0.18)" : "rgba(16, 185, 129, 0.18)",
+                    color: selectedPersona.isDeepfake ? "#f87171" : "#34d399",
                     padding: "2px 6px",
                     borderRadius: "4px",
-                    border: "1px solid rgba(239, 68, 68, 0.3)"
+                    border: selectedPersona.isDeepfake ? "1px solid rgba(239, 68, 68, 0.3)" : "1px solid rgba(16, 185, 129, 0.3)"
                   }}>
                     {selectedPersona.callerType}
                   </span>
                 </div>
                 <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
                   {selectedPersona.callerId}
+                </div>
+                <div style={{ fontSize: 11, color: selectedPersona.isDeepfake ? "#f87171" : "#34d399", marginTop: 4, fontFamily: "monospace" }}>
+                  {modelEvidence}
                 </div>
               </div>
             </div>
@@ -498,7 +636,7 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
               <span className={`twoway-risk-badge ${riskScore >= 70 ? "risk-high" : riskScore >= 40 ? "risk-medium" : "risk-low"}`}>
                 RISK: {riskScore}/100
               </span>
-              <span style={{ fontSize: 10, color: "#f87171", marginTop: 3, fontWeight: 600 }}>
+              <span style={{ fontSize: 10, color: riskScore >= 70 ? "#f87171" : riskScore >= 40 ? "#fbbf24" : "#34d399", marginTop: 3, fontWeight: 600 }}>
                 {verdict}
               </span>
             </div>
@@ -528,7 +666,7 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
                   Inbound (Deepfake AI Voice)
                 </span>
                 <span style={{ color: callStatus === "blocked" ? "#ef4444" : isAiSpeaking ? "#f87171" : "#94a3b8", fontSize: 11 }}>
-                  {callStatus === "blocked" ? "Terminated (Blocked)" : isAiSpeaking ? "● Synthetic Artifacts Detected" : "Idle"}
+                  {callStatus === "blocked" ? "Terminated (Blocked)" : isAiSpeaking ? "● Caller speaking — scoring this turn" : "Idle"}
                 </span>
               </div>
               <div style={{

@@ -9,3 +9,12 @@ pytest>=8,<10
 # AASIST-L neural spoof detector (backend/app/aasist.py). CPU-only inference; the model file
 # itself is downloaded on first run (backend/tools/download_aasist_model.py), not vendored here.
 onnxruntime>=1.18,<2
+
+# Neural TTS for the 2-way call demo (backend/app/tts.py): Meta MMS-TTS (VITS) run locally on
+# CPU so no call audio and no demo text ever reaches a third-party API (CLAUDE.md invariant 1).
+# Imported lazily -- a sidecar without these still starts and serves every other route, and
+# /internal/tts/speak returns 503 rather than silence (tested: tests/test_tts.py).
+# LICENCE: the facebook/mms-tts-* weights are CC BY-NC 4.0. Audio generated with them is
+# research/demo-only, the same posture CLAUDE.md decision D-3 records for MLAAD.
+torch>=2.2,<3
+transformers>=4.44,<5

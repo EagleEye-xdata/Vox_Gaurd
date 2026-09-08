@@ -149,11 +149,12 @@ var factorNames = map[string]string{
 	"ai":      "ai_synthetic",
 	"speaker": "speaker_mismatch",
 	"context": "context_risk",
+	"intent":  "intent_risk",
 }
 
 // signalOrder fixes the top-level signal order so active_signals and contributing_factors are
 // deterministic and match the Python dict insertion order.
-var signalOrder = []string{"ai", "speaker", "context"}
+var signalOrder = []string{"ai", "speaker", "context", "intent"}
 
 // ScoreWindow fuses one window's signals into a 0-100 score (03 section 1).
 //
@@ -232,6 +233,17 @@ func ScoreWindow(d *Detection, c *Context, v *Verification, p policy.Pack) (*Win
 			terms["context"] = *value
 			active["context"] = p.Weights.Context
 		}
+	}
+
+	// --- Intent / Content Risk signal (I_risk from Whisper STT) --------------------------
+	// IntentRisk is the 0.15-weighted 4th signal. When Whisper is not available the
+	// Python sidecar returns nil; we renormalise the remaining three over 0.85 rather
+	// than leaving 0.15 floating as a phantom safe-intent score.
+	if c != nil && c.IntentRisk != nil {
+		terms["intent"] = *c.IntentRisk
+		active["intent"] = p.Weights.Intent
+	} else {
+		inactive["intent"] = "intent_scorer_unavailable"
 	}
 
 	// --- Floors from adversarial conditions ----------------------------------------------

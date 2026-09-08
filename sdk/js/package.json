@@ -1,0 +1,16 @@
+{
+  "name": "voxguard-sdk",
+  "version": "1.0.0",
+  "description": "VoxGuard AI — JavaScript SDK for real-time AI voice clone detection",
+  "type": "module",
+  "main": "./voxguard-sdk.js",
+  "exports": {
+    ".": {
+      "import": "./voxguard-sdk.js",
+      "require": "./voxguard-sdk.js"
+    }
+  },
+  "keywords": ["voxguard", "deepfake", "voice-clone", "fraud-detection", "ai-voice"],
+  "license": "Apache-2.0",
+  "engines": { "node": ">=18" }
+}

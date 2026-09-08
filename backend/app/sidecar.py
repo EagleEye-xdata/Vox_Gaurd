@@ -16,6 +16,7 @@ This service binds to loopback and is not the public API. Everything a browser t
 Go gateway on :8000.
 """
 import asyncio
+import base64
 import logging
 import os
 import time
@@ -34,6 +35,11 @@ from .features import extract
 from .ingestion import AUDIO_DIR, chunks, resolve_audio
 from .preprocessing import SAMPLE_RATE, preprocess
 from .speaker_verification import MODEL_VERSION as VERIFIER_VERSION, verifier
+from . import tts
+from . import intent as intent_scorer
+from . import prosody as prosody_analyser
+from .session_drift import drift_checker
+from . import privacy_logger
 
 # A demo box streams multiple calls at once. The cap exists so a client that forgets to close
 # streams cannot pin an unbounded number of open file handles and generators.
@@ -59,6 +65,12 @@ class AnalyseRequest(StrictModel):
     identity_id: str | None = Field(default=None, max_length=80)
 
 
+
+
+class SpeakRequest(StrictModel):
+    text: str = Field(min_length=1, max_length=400)
+    voice: str | None = Field(default=None, max_length=8)
+    identity_id: str | None = Field(default=None, max_length=80)
 
 
 class EnrolRequest(StrictModel):
@@ -98,7 +110,12 @@ app = FastAPI(title="VoxGuard ML sidecar", version="1.0.0", lifespan=lifespan)
 
 
 def analyse_buffer(audio: np.ndarray, identity_id: str | None = None) -> dict:
-    """Preprocess, extract features, detect, and verify one window.
+    """Preprocess, extract features, detect, verify, and score intent for one window.
+
+    Three parallel branches run over the same window:
+      • AI detection   (AASIST-L or heuristic fallback)  → P_synth
+      • Speaker verify (ECAPA-TDNN cosine match)          → S_bio
+      • Intent scoring (Whisper STT + phrase classifier)  → I_risk
 
     The window's samples are zeroed in the finally block whatever happens, so no caller can
     receive them and no exception path leaves them resident.
@@ -137,7 +154,40 @@ def analyse_buffer(audio: np.ndarray, identity_id: str | None = None) -> dict:
         # (docs/01 section 2, DR-010) — verification never consumes the detector's output.
         verification = verifier.verify(features, identity_id) if identity_id else None
 
-        return {
+        # --- Intent / Content Risk (Step 5) ----------------------------------------------
+        try:
+            intent_result = intent_scorer.score(np.array(audio, dtype=np.float32), SAMPLE_RATE)
+        except Exception as intent_err:
+            log.warning("Intent scorer failed on window, I_risk defaulting to 0: %s", intent_err)
+            intent_result = intent_scorer.IntentResult()
+
+        # --- Prosody & Behavioural Analysis (PS requirement — separate layer) --------------
+        # Runs on the pre-filtered `processed` signal (VAD-gated, bandpass-filtered).
+        # prosody_risk is exposed to the Go fusion as an additional explainability signal
+        # and surfaced in the dashboard as a dedicated prosody score.
+        try:
+            prosody_result = prosody_analyser.analyse(np.array(processed, dtype=np.float32), SAMPLE_RATE)
+        except Exception as pr_err:
+            log.warning("Prosody analyser failed: %s", pr_err)
+            prosody_result = prosody_analyser.ProsodyResult()
+
+        # --- Cross-session drift check (PS requirement: historical sample comparison) -----
+        drift_result = None
+        if identity_id and verification and verification.get("reference_available"):
+            try:
+                from .speaker_verification import _embedding_from_feats
+                cur_emb = _embedding_from_feats(features, speech_ratio)
+                drift_result = drift_checker.check_drift(identity_id, cur_emb)
+                # Record this window's embedding in history ONLY if verification passed
+                if (verification.get("match_score") or 0) > 0.60:
+                    drift_checker.record_embedding(
+                        identity_id, cur_emb.copy(),
+                        match_score=verification.get("match_score")
+                    )
+            except Exception as dr_err:
+                log.warning("Session drift check failed: %s", dr_err)
+
+        result_dict = {
             "scored": True,
             **scores,
             "p_synthetic": scores["synthetic_score"],
@@ -147,8 +197,62 @@ def analyse_buffer(audio: np.ndarray, identity_id: str | None = None) -> dict:
             "speech_ratio": speech_ratio,
             "features": features,
             "verification": verification,
+            # Intent branch — I_risk for Go fusion
+            "i_risk": intent_result.i_risk,
+            "intent": {
+                "transcript": intent_result.transcript,
+                "matched_phrases": intent_result.matched_phrases,
+                "heuristic_hits": intent_result.heuristic_hits,
+                "whisper_available": intent_result.whisper_available,
+                "language_detected": intent_result.language_detected,
+                "latency_ms": intent_result.latency_ms,
+                "error": intent_result.error,
+            },
+            # Prosody branch — dedicated behavioral analysis (PS explicit requirement)
+            "prosody_risk": prosody_result.prosody_risk,
+            "prosody": {
+                "pitch_mean_hz": prosody_result.pitch_mean_hz,
+                "pitch_std_hz": prosody_result.pitch_std_hz,
+                "pitch_cv": prosody_result.pitch_cv,
+                "pitch_contour_smoothness": prosody_result.pitch_contour_smoothness,
+                "pause_count": prosody_result.pause_count,
+                "mean_pause_duration_ms": prosody_result.mean_pause_duration_ms,
+                "rhythm_regularity": prosody_result.rhythm_regularity,
+                "energy_cv": prosody_result.energy_cv,
+                "local_rate_cv": prosody_result.local_rate_cv,
+                "subscores": prosody_result.subscores,
+                "analysis_available": prosody_result.analysis_available,
+                "error": prosody_result.error,
+            },
+            # Cross-session drift (PS: compare against historical genuine samples)
+            "drift_score": drift_result.drift_score if drift_result else None,
+            "session_drift": {
+                "drift_score": drift_result.drift_score if drift_result else None,
+                "history_size": drift_result.history_size if drift_result else 0,
+                "mean_historical_similarity": drift_result.mean_historical_similarity if drift_result else None,
+                "drift_available": drift_result.drift_available if drift_result else False,
+                "reason": drift_result.reason if drift_result else "identity_id_not_provided",
+            },
             "latency_ms": round((time.perf_counter() - started) * 1000, 2),
         }
+
+        # --- Anonymised compliance log (PS: edge inference + feature-only logging) ---------
+        try:
+            privacy_logger.log_window(
+                call_id="live",
+                window_index=0,
+                identity_id=identity_id,
+                p_synthetic=result_dict["p_synthetic"],
+                prosody_risk=prosody_result.prosody_risk,
+                i_risk=intent_result.i_risk,
+                drift_score=drift_result.drift_score if drift_result else None,
+                match_score=(verification or {}).get("match_score"),
+                features=features,
+            )
+        except Exception as pl_err:
+            log.debug("Privacy log write failed (non-critical): %s", pl_err)
+
+        return result_dict
     finally:
         audio.fill(0)
         if processed is not None:
@@ -167,6 +271,37 @@ def window_results(path: Path, identity_id: str | None, window_seconds: float, h
             yield {"chunk_index": index, **analyse_buffer(audio, identity_id)}
     finally:
         source.close()
+
+
+@app.get("/internal/compliance")
+def compliance():
+    """Return machine-readable compliance statement evidencing on-device edge inference.
+
+    PS requirement: privacy/compliance + on-device/edge inference support.
+    This endpoint exists so integration partners (banks, telecom) can verify the system's
+    data-handling claims without auditing source code.
+    """
+    return privacy_logger.compliance_statement()
+
+
+@app.get("/internal/compliance/audit")
+def audit_log(call_id: str | None = None, limit: int = 100):
+    """Export anonymised audit records (scores + fingerprints, never audio).
+
+    PS requirement: anonymized feature-only logging for compliance.
+    """
+    records = privacy_logger.export_report(call_id=call_id, max_records=limit)
+    return {"records": records, "count": len(records)}
+
+
+@app.get("/internal/drift/{identity_id}")
+def drift_history(identity_id: str):
+    """Return cross-session embedding history summary for an identity.
+
+    PS requirement: compare ongoing call against historical genuine samples.
+    Shows stored call count, per-call match scores, and embedding hashes (not vectors).
+    """
+    return drift_checker.history_summary(identity_id)
 
 
 @app.get("/internal/health")
@@ -258,6 +393,100 @@ async def analyse(body: AnalyseRequest):
 
 
 
+def _synthesize_and_score(text: str, voice: str | None, identity_id: str | None) -> dict:
+    """Generate one TTS turn and score that exact waveform with the live detector.
+
+    The point of this endpoint is that the number the operator sees is the number the model
+    returned. So the audio handed back for playback and the audio handed to `analyse_buffer` are
+    the same samples -- there is no separate "demo score" path, and no hardcoded constant anywhere
+    between the vocoder and the UI.
+
+    Windows are the same 3.0 s the streaming pipeline uses, scored independently and reported
+    individually, because one aggregate number would hide a detector that only fired on part of
+    the turn. Aggregation is over *scored* windows only: a window `preprocess()` rejected as
+    silence carries no evidence, and CLAUDE.md invariant 2 forbids letting it read as a pass.
+    """
+    audio, chosen_voice, model_id = tts.SYNTHESIZER.synthesize(text, voice)
+    duration = len(audio) / tts.SAMPLE_RATE
+    # Encode for playback first: `analyse_buffer` zeroes every buffer it is given.
+    wav_bytes = tts.to_wav_bytes(audio, tts.SAMPLE_RATE)
+
+    window_samples = int(3.0 * SAMPLE_RATE)
+    windows = []
+    try:
+        for start in range(0, max(1, len(audio)), window_samples):
+            segment = audio[start:start + window_samples]
+            if len(segment) < 4000:  # too short to carry a pitch track; not evidence either way
+                continue
+            result = analyse_buffer(np.array(segment, dtype=np.float32), identity_id)
+            windows.append({
+                "window_index": len(windows) + 1,
+                "scored": result["scored"],
+                "p_synthetic": result.get("p_synthetic"),
+                "classification": result.get("classification"),
+                "confidence": result.get("confidence"),
+                "reason": result.get("reason"),
+                "latency_ms": result.get("latency_ms"),
+            })
+    finally:
+        audio.fill(0)
+
+    scored = [w for w in windows if w["scored"] and w["p_synthetic"] is not None]
+    if scored:
+        values = [float(w["p_synthetic"]) for w in scored]
+        detection = {
+            "status": "SCORED",
+            "p_synthetic_max": round(max(values), 4),
+            "p_synthetic_mean": round(sum(values) / len(values), 4),
+            "windows_scored": len(scored),
+        }
+    else:
+        # No voiced window survived preprocessing. Absence of evidence is UNKNOWN, never LOW.
+        detection = {
+            "status": "UNKNOWN",
+            "p_synthetic_max": None,
+            "p_synthetic_mean": None,
+            "windows_scored": 0,
+            "reason": "No voiced window in the generated turn could be scored.",
+        }
+
+    return {
+        "audio_wav_base64": base64.b64encode(wav_bytes).decode("ascii"),
+        "sample_rate": tts.SAMPLE_RATE,
+        "duration_seconds": round(duration, 3),
+        "voice": chosen_voice,
+        "tts_model_id": model_id,
+        # Every decision carries the versions that produced it (CLAUDE.md invariant 8). The TTS
+        # model is part of that provenance here: it is what generated the audio being scored.
+        "tts_model_version": f"{model_id}@mms-tts-vits",
+        "tts_licence": "CC-BY-NC-4.0 (research/demo only)",
+        "detector": classifier.name,
+        "model_versions": {
+            "detector": classifier.model_version,
+            "calibrator": classifier.calibrator_version,
+            "tts": f"{model_id}@mms-tts-vits",
+        },
+        "windows": windows,
+        "detection": detection,
+    }
+
+
+@app.post("/internal/tts/speak")
+async def tts_speak(body: SpeakRequest):
+    """Synthesise the bot's turn locally and return it with its real detector score.
+
+    Failures are reported, never papered over with silence: a caller that got a 503 here knows the
+    turn did not happen, whereas an empty WAV plus a score would be a fabricated result.
+    """
+    try:
+        return await asyncio.to_thread(
+            _synthesize_and_score, body.text, body.voice, body.identity_id)
+    except tts.MMSTTSUnavailable as error:
+        raise HTTPException(503, f"Neural TTS unavailable: {error}")
+    except ValueError as error:
+        raise HTTPException(422, str(error))
+
+
 @app.post("/internal/enrolments")
 def enrol(body: EnrolRequest):
     audio = np.array(body.samples, dtype=np.float32)
@@ -288,6 +517,31 @@ def revoke_enrolment(identity_id: str):
     if not verifier.revoke(identity_id):
         raise HTTPException(404, f"Speaker profile '{identity_id}' not found.")
     return {"status": "revoked", "identity_id": identity_id}
+
+
+# ---------------------------------------------------------------------------
+# Twilio Media Streams WebSocket ingest
+# ---------------------------------------------------------------------------
+# Register lazily so missing `audioop` (Python 3.13+) does not break the sidecar
+# when Twilio ingest is not needed.
+try:
+    from . import twilio_ingest as _twilio
+
+    @app.websocket("/ws/twilio/media")
+    async def twilio_media_stream(websocket):
+        """Accept a Twilio Media Stream and pipe audio through the full detection pipeline.
+
+        TwiML to activate:
+            <Connect><Stream url="wss://YOUR_HOST/ws/twilio/media"/></Connect>
+        """
+        await _twilio.handle_twilio_stream(websocket, analyse_buffer)
+
+except ImportError as _twilio_import_err:
+    log.warning(
+        "Twilio ingest not available (%s). "
+        "Install scipy and ensure Python <= 3.12 (audioop removed in 3.13).",
+        _twilio_import_err,
+    )
 
 
 def main():

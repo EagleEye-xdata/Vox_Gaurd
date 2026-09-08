@@ -104,6 +104,23 @@ type Window struct {
 
 	Features     map[string]any `json:"features"`
 	Verification *Verification  `json:"verification"`
+
+	// IRisk is the intent/content risk score ∈ [0,1] from the Whisper STT + phrase
+	// classifier pipeline.  Nil means the intent scorer was unavailable for this window;
+	// the fusion engine treats nil as "signal not active" and renormalises without it.
+	IRisk          *float64        `json:"i_risk,omitempty"`
+	IntentMetadata *IntentMetadata `json:"intent,omitempty"`
+}
+
+// IntentMetadata carries diagnostics from the intent scorer for operator transparency.
+type IntentMetadata struct {
+	Transcript        string   `json:"transcript"`
+	MatchedPhrases    []string `json:"matched_phrases"`
+	HeuristicHits     []string `json:"heuristic_hits"`
+	WhisperAvailable  bool     `json:"whisper_available"`
+	LanguageDetected  *string  `json:"language_detected,omitempty"`
+	LatencyMS         float64  `json:"latency_ms"`
+	Error             *string  `json:"error,omitempty"`
 }
 
 // Validate rejects malformed derived windows at the private Python-to-Go boundary. Audio is
