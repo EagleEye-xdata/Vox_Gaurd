@@ -1,0 +1,69 @@
+/**
+ * Hallmark × UI UX Pro Max Design System Tokens
+ * Theme: Cyberpunk OLED + Real-Time Command Center
+ * Mode: Dark (True Black)
+ *
+ * Rule: NO inline colors in JS. All components MUST use these variables.
+ */
+
+:root {
+  /* ==========================================================================
+     Surfaces & Elevation
+     ========================================================================== */
+  --color-surface-base: #000000;          /* True OLED Black */
+  --color-surface-elevated: #090A0F;      /* Barely lighter for contrast */
+  --color-surface-layer: #121824;         /* Command panels */
+  --color-surface-glass: rgba(18, 24, 36, 0.7); /* Translucent panels */
+
+  /* ==========================================================================
+     Typography & Contrast
+     ========================================================================== */
+  --color-text-primary: #FFFFFF;
+  --color-text-secondary: #94A3B8;
+  --color-text-tertiary: #64748B;
+
+  --font-sans: 'Geist', 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* ==========================================================================
+     Telemetry & Semantic State
+     ========================================================================== */
+  --color-authentic: #00FF87;             /* Cyberpunk Neon Green */
+  --color-authentic-dim: rgba(0, 255, 135, 0.15);
+
+  --color-threat-critical: #FF003C;       /* Cyberpunk Red */
+  --color-threat-critical-dim: rgba(255, 0, 60, 0.15);
+
+  --color-threat-elevated: #FFB000;       /* Warning Orange */
+  --color-threat-elevated-dim: rgba(255, 176, 0, 0.15);
+
+  --color-accent-blue: #00E5FF;           /* Cyan Accent */
+  --color-accent-blue-dim: rgba(0, 229, 255, 0.15);
+
+  --color-accent-indigo: #6366F1;
+  --color-accent-indigo-dim: rgba(99, 102, 241, 0.15);
+
+  /* ==========================================================================
+     Borders & Scaffolding
+     ========================================================================== */
+  --color-border-subtle: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.2);
+  --color-border-authentic: rgba(0, 255, 135, 0.4);
+  --color-border-threat: rgba(255, 0, 60, 0.4);
+
+  /* ==========================================================================
+     Interaction States
+     ========================================================================== */
+  --color-hover-overlay: rgba(255, 255, 255, 0.05);
+  --color-active-overlay: rgba(255, 255, 255, 0.1);
+  --color-focus-ring: rgba(0, 229, 255, 0.6);
+  --color-disabled: rgba(255, 255, 255, 0.1);
+}
+
+/* Base Body Resets */
+body {
+  background-color: var(--color-surface-base);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  overflow-x: clip; /* Hallmark strict mobile rule */
+}

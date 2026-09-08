@@ -9,3 +9,4 @@ pytest>=8,<10
 # AASIST-L neural spoof detector (backend/app/aasist.py). CPU-only inference; the model file
 # itself is downloaded on first run (backend/tools/download_aasist_model.py), not vendored here.
 onnxruntime>=1.18,<2
+google-genai>=0.3.0

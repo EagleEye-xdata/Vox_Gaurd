@@ -1,5 +1,11 @@
 #!/bin/bash
 echo "Starting VoiceShield AI services..."
+# Load environment variables from .env if it exists
+if [ -f .env ]; then
+  set -a
+  source .env
+  set +a
+fi
 
 # Start Python Sidecar
 cd backend

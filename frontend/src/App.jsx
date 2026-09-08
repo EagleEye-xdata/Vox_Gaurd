@@ -12,6 +12,9 @@ import {
   Gavel,
   FileText,
   PhoneCall,
+  AlertTriangle,
+  Activity,
+  CheckCircle
 } from "lucide-react";
 import { api, socket } from "./api";
 import Dashboard from "./components/Dashboard";
@@ -23,6 +26,7 @@ import AppealModal from "./components/AppealModal";
 import SessionSummaryModal from "./components/SessionSummaryModal";
 import EnrolmentModal from "./components/EnrolmentModal";
 import TwoWayCallModal from "./components/TwoWayCallModal";
+import TelemetryConsole from "./components/TelemetryConsole";
 
 export default function App() {
   const [calls, setCalls] = useState([]),
@@ -173,342 +177,8 @@ export default function App() {
     });
   }
 
-  return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <a
-          className="brand"
-          href="#"
-          onClick={(e) => {
-            e.preventDefault();
-            setPage("monitor");
-          }}
-        >
-          <span className="brand-mark">
-            <Shield size={23} />
-          </span>
-          <span>
-            VoiceShield<span className="brand-ai">AI</span>
-          </span>
-        </a>
-        <div className="workspace">
-          <span className="workspace-avatar">VG</span>
-          <div>
-            <strong>vox_Guard</strong>
-            <small>SIH 2026 workspace</small>
-          </div>
-          <ChevronRight size={15} />
-        </div>
-        <span className="nav-label">WORKSPACE</span>
-        <nav>
-          {[
-            [LayoutDashboard, "monitor", "Call monitor"],
-            [PhoneCall, "telephony", "Live Phone"],
-            [BookOpen, "ledger", "Audit trail"],
-          ].map(([Icon, key, title]) => (
-            <button
-              key={key}
-              className={page === key ? "nav-item active" : "nav-item"}
-              onClick={() => setPage(key)}
-            >
-              <Icon size={18} />
-              {title}
-              {key === "monitor" && (
-                <span className="nav-count">
-                  {calls.filter((c) => c.status === "streaming").length}
-                </span>
-              )}
-            </button>
-          ))}
-        </nav>
-
-        <div style={{ padding: "0 12px", marginTop: "12px" }}>
-          <button
-            className="nav-item"
-            style={{
-              width: "100%",
-              justifyContent: "flex-start",
-              background: "var(--color-paper-2)",
-            }}
-            onClick={() => setEnrolmentModalOpen(true)}
-          >
-            <UserCheck size={16} color="var(--color-safe)" />
-            Voice Profiles ({enrolments.length})
-          </button>
-        </div>
-
-        <div className="sidebar-bottom">
-          <div className="privacy-mark">
-            <LockKeyhole size={18} />
-            <span>
-              Private by architecture<small>Audio stays on this machine.</small>
-            </span>
-          </div>
-          <button className="nav-item" onClick={() => setPage("guide")}>
-            <CircleHelp size={18} />
-            Demo guide
-          </button>
-          <div className="user">
-            <span className="workspace-avatar">VG</span>
-            <div>
-              <strong>vox_Guard team</strong>
-              <small>Local environment</small>
-            </div>
-            <span className="dot" />
-          </div>
-        </div>
-      </aside>
-
-      <div className="main-shell">
-        <header className="topbar">
-          <div>
-            Workspace <ChevronRight size={13} />
-            <strong>
-              {page === "monitor"
-                ? "Call monitor"
-                : page === "ledger"
-                  ? "Audit trail"
-                  : page === "telephony"
-                    ? "Live Phone"
-                    : "Demo guide"}
-            </strong>
-          </div>
-          <span className="environment">
-            <i className={`dot ${online ? "" : "muted-dot"}`} />
-            {online ? "Backend connected" : "Backend offline"}
-            <span className="local-tag">LOCAL DEMO</span>
-          </span>
-        </header>
-        <main>
-          <nav className="mobile-nav" aria-label="Mobile navigation">
-            {[
-              ["monitor", "Monitor"],
-              ["telephony", "Live Phone"],
-              ["ledger", "Ledger"],
-              ["guide", "Guide"],
-            ].map(([key, title]) => (
-              <button
-                key={key}
-                className={page === key ? "active" : ""}
-                onClick={() => setPage(key)}
-              >
-                {title}
-              </button>
-            ))}
-          </nav>
-          <div className="page-heading">
-            <div>
-              <span className="eyebrow">
-                {page === "monitor"
-                  ? "CALL MONITOR"
-                  : page === "ledger"
-                    ? "AUDIT TRAIL"
-                    : page === "telephony"
-                      ? "TELEPHONY INTERFACE"
-                      : "DOCUMENTATION"}
-              </span>
-              <h1>
-                {page === "monitor"
-                  ? "Voice fraud analysis"
-                  : page === "ledger"
-                    ? "Forensic audit ledger"
-                    : page === "telephony"
-                      ? "Live SIP softphone"
-                      : "VoiceShield AI guide"}
-              </h1>
-              <p>
-                {page === "monitor"
-                  ? "Real-time acoustic analysis, speaker verification, and automated policy decision engine."
-                  : page === "ledger"
-                    ? "Immutable SHA-256 hash chain and origin decision signatures."
-                    : page === "telephony"
-                      ? "Connect to Asterisk PBX over SIP/WSS and monitor live phone calls in real time."
-                      : "System architecture and judge Q&A summary."}
-              </p>
-            </div>
-            {page === "monitor" && (
-              <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-                <button
-                  className="primary"
-                  style={{
-                    background: "linear-gradient(135deg, #4f46e5, #06b6d4)",
-                    border: "none",
-                    boxShadow: "0 0 15px rgba(79, 70, 229, 0.4)",
-                  }}
-                  onClick={() => setTwoWayCallOpen(true)}
-                >
-                  <Radio size={16} /> 2-Way Live AI Call
-                </button>
-              </div>
-            )}
-          </div>
-
-          {error && <div className="error-banner">{error}</div>}
-
-          {page === "monitor" && (
-            <>
-              <Dashboard
-                calls={calls}
-                selected={selected}
-                onSelect={(id) => setSelected(id)}
-              />
-              <div className="main-grid">
-                <CallDetail
-                  call={call}
-                  onStop={() => act(() => api(`/stream/${selected}/stop`))}
-                  busy={busy}
-                  onOpenOverride={(c) => setOverrideModalCall(c)}
-                  onOpenSummary={(c) => setSummaryModalCall(c)}
-                />
-                <AlertPopup
-                  alerts={alerts}
-                  onEscalate={(id) => act(() => api(`/alerts/${id}/escalate`))}
-                  onAssign={handleAlertAssign}
-                  onResolve={handleAlertResolve}
-                  onOpenAppeal={(a) => setAppealModalAlert(a)}
-                  busy={busy}
-                />
-              </div>
-            </>
-          )}
-
-
-
-          {page === "ledger" && (
-            <LedgerPanel
-              entries={ledger}
-              onVerify={verify}
-              verification={verification}
-              verifying={verifying}
-            />
-          )}
-
-          {page === "guide" && (
-            <div className="panel guide-panel" style={{ padding: "20px" }}>
-              <h2>System Architecture & Compliance Overview</h2>
-              <p style={{ marginTop: "8px" }}>
-                VoiceShield AI provides a real-time, explainable, and provably
-                tamper-evident defense against generative voice cloning and
-                impersonation attacks in financial communications.
-              </p>
-              <div
-                style={{
-                  marginTop: "16px",
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: "16px",
-                }}
-              >
-                <div
-                  style={{
-                    background: "var(--color-paper-2)",
-                    padding: "12px",
-                    borderRadius: "6px",
-                  }}
-                >
-                  <h3>Core Invariants</h3>
-                  <ul
-                    style={{
-                      paddingLeft: "20px",
-                      fontSize: "13px",
-                      color: "var(--color-muted)",
-                    }}
-                  >
-                    <li>Zero raw audio touches disk or broker logs.</li>
-                    <li>
-                      Floors applied last via max() to prevent masking attacks.
-                    </li>
-                    <li>Absence of evidence is UNKNOWN, never LOW.</li>
-                    <li>Origin cryptographic signing on all decisions.</li>
-                  </ul>
-                </div>
-                <div
-                  style={{
-                    background: "var(--color-paper-2)",
-                    padding: "12px",
-                    borderRadius: "6px",
-                  }}
-                >
-                  <h3>Compliance & Redress</h3>
-                  <ul
-                    style={{
-                      paddingLeft: "20px",
-                      fontSize: "13px",
-                      color: "var(--color-muted)",
-                    }}
-                  >
-                    <li>
-                      Complies with India DPDP Act & GDPR biometric constraints.
-                    </li>
-                    <li>
-                      Integrated customer dispute & appeal filing workflow.
-                    </li>
-                    <li>
-                      Closed-loop analyst resolution for continuous feedback.
-                    </li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {page === "telephony" && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 20,
-                padding: "36px 20px",
-                maxWidth: 700,
-                margin: "0 auto",
-                textAlign: "center",
-              }}
-            >
-              <div
-                style={{
-                  width: 64,
-                  height: 64,
-                  borderRadius: "50%",
-                  background: "linear-gradient(135deg, #4f46e5, #06b6d4)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  boxShadow: "0 0 30px rgba(79, 70, 229, 0.4)",
-                }}
-              >
-                <Radio size={32} color="white" />
-              </div>
-
-              <h2>Real-Time Two-Way AI Voice Call</h2>
-              <p style={{ color: "var(--color-muted)", fontSize: 14, maxWidth: 500 }}>
-                Initiate an interactive live conversation with an AI Scammer bot. Speak into your microphone, hear the synthetic voice reply, and observe VoxGuard's real-time deepfake detection, risk scoring, and automated policy blocking.
-              </p>
-
-              <button
-                className="primary"
-                style={{
-                  padding: "12px 28px",
-                  fontSize: 15,
-                  fontWeight: 600,
-                  background: "linear-gradient(135deg, #4f46e5, #06b6d4)",
-                  border: "none",
-                  borderRadius: 12,
-                  boxShadow: "0 0 20px rgba(79, 70, 229, 0.5)",
-                  cursor: "pointer",
-                }}
-                onClick={() => setTwoWayCallOpen(true)}
-              >
-                <Radio size={18} style={{ marginRight: 8 }} />
-                Launch 2-Way Live Call
-              </button>
-            </div>
-          )}
-        </main>
-      </div>
-
-      {/* Modals */}
+  const renderModals = () => (
+    <>
       <SupervisorOverrideModal
         call={overrideModalCall}
         isOpen={Boolean(overrideModalCall)}
@@ -547,6 +217,202 @@ export default function App() {
           setSelected(callId);
         }}
       />
+    </>
+  );
+
+  return (
+    <div className="flex h-screen bg-[var(--color-surface-base)] text-[var(--color-text-secondary)] font-sans overflow-hidden">
+      {/* Global Sidebar */}
+      <aside className="w-64 bg-[var(--color-surface-elevated)] border-r border-[var(--color-border-subtle)] flex flex-col shrink-0 z-20">
+        <div className="h-14 flex items-center px-6 border-b border-[var(--color-border-subtle)] shrink-0">
+          <Shield className="w-5 h-5 text-[var(--color-authentic)] mr-3" />
+          <span className="font-semibold text-[var(--color-text-primary)] tracking-wide">VoiceShield <span className="text-[var(--color-accent-blue)]">AI</span></span>
+        </div>
+
+        <div className="p-4 border-b border-[var(--color-border-subtle)]">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded bg-[var(--color-surface-layer)] border border-[var(--color-border-subtle)] flex items-center justify-center text-xs font-bold text-[var(--color-text-primary)]">
+              VG
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold text-[var(--color-text-primary)] truncate">vox_Guard</div>
+              <div className="text-xs text-[var(--color-text-tertiary)] truncate">SIH 2026 Workspace</div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-[var(--color-text-tertiary)]" />
+          </div>
+        </div>
+
+        <nav className="flex-1 overflow-y-auto py-4 px-3 flex flex-col gap-1">
+          <div className="px-3 mb-2 text-[10px] font-bold text-[var(--color-text-tertiary)] uppercase tracking-wider">Workspace</div>
+
+          {[
+            [LayoutDashboard, "monitor", "Command Center"],
+            [PhoneCall, "telephony", "Live Intercept"],
+            [BookOpen, "ledger", "Forensic Ledger"],
+          ].map(([Icon, key, title]) => (
+            <button
+              key={key}
+              onClick={() => setPage(key)}
+              className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all ${page === key ? 'bg-[var(--color-surface-layer)] text-[var(--color-text-primary)] border border-[var(--color-border-subtle)] shadow-sm' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-glass)] hover:text-[var(--color-text-primary)] border border-transparent'}`}
+            >
+              <Icon className={`w-4 h-4 ${page === key ? 'text-[var(--color-accent-blue)]' : ''}`} />
+              {title}
+              {key === "monitor" && (
+                <span className="ml-auto bg-[var(--color-surface-base)] border border-[var(--color-border-subtle)] px-2 py-0.5 rounded text-[10px] font-bold">
+                  {calls.filter((c) => c.status === "streaming").length}
+                </span>
+              )}
+            </button>
+          ))}
+
+          <div className="mt-6 px-3 mb-2 text-[10px] font-bold text-[var(--color-text-tertiary)] uppercase tracking-wider">Configuration</div>
+
+          <button
+            onClick={() => setEnrolmentModalOpen(true)}
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-glass)] hover:text-[var(--color-text-primary)] transition-colors"
+          >
+            <UserCheck className="w-4 h-4 text-[var(--color-safe)]" />
+            Voice Profiles
+            <span className="ml-auto bg-[var(--color-surface-layer)] px-2 py-0.5 rounded text-[10px]">{enrolments.length}</span>
+          </button>
+        </nav>
+
+        <div className="p-4 border-t border-[var(--color-border-subtle)] bg-[var(--color-surface-glass)]">
+          <div className="flex items-center gap-2 mb-4 text-xs text-[var(--color-text-secondary)]">
+            <LockKeyhole className="w-4 h-4 text-[var(--color-authentic)]" />
+            <div>
+              <div className="font-medium text-[var(--color-text-primary)]">Private Architecture</div>
+              <div className="text-[10px] text-[var(--color-text-tertiary)]">Zero raw audio retained</div>
+            </div>
+          </div>
+          <button onClick={() => setPage("guide")} className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-surface-layer)] border border-[var(--color-border-subtle)] text-xs font-medium hover:bg-[var(--color-hover-overlay)] transition-colors">
+            <CircleHelp className="w-4 h-4" /> Documentation
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <main className="flex-1 flex flex-col min-w-0 bg-[var(--color-surface-base)] relative">
+        {page === "monitor" ? (
+          <TelemetryConsole
+            calls={calls}
+            selected={selected}
+            onSelect={setSelected}
+            ledger={ledger}
+            alerts={alerts}
+            onEscalate={(id) => act(() => api(`/alerts/${id}/escalate`))}
+            onAssign={handleAlertAssign}
+            onResolve={handleAlertResolve}
+            onOpenAppeal={(a) => setAppealModalAlert(a)}
+            onStop={() => act(() => api(`/stream/${selected}/stop`))}
+            onOpenOverride={(c) => setOverrideModalCall(c)}
+            onOpenSummary={(c) => setSummaryModalCall(c)}
+            onOpenTwoWay={() => setTwoWayCallOpen(true)}
+            busy={busy}
+          />
+        ) : (
+          <div className="flex-1 overflow-y-auto">
+            {/* Header for non-monitor pages */}
+            <header className="h-14 border-b border-[var(--color-border-subtle)] bg-[var(--color-surface-elevated)] backdrop-blur-md flex items-center justify-between px-6 shrink-0 sticky top-0 z-10">
+              <div className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
+                Workspace <ChevronRight className="w-3.5 h-3.5" />
+                <span className="font-semibold text-[var(--color-text-primary)]">
+                  {page === "ledger" ? "Forensic Ledger" : page === "telephony" ? "Live Intercept" : "Documentation"}
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className={`w-2 h-2 rounded-full ${online ? 'bg-[var(--color-authentic)]' : 'bg-[var(--color-threat-critical)]'}`}></div>
+                <span className="text-xs font-medium">{online ? "Backend Connected" : "Backend Offline"}</span>
+                <span className="px-2 py-0.5 rounded bg-[var(--color-surface-layer)] border border-[var(--color-border-subtle)] text-[10px] font-mono text-[var(--color-text-tertiary)]">LOCAL DEMO</span>
+              </div>
+            </header>
+
+            <div className="p-8 max-w-6xl mx-auto">
+              <div className="mb-8">
+                <h1 className="text-3xl font-bold text-[var(--color-text-primary)] tracking-tight mb-2">
+                  {page === "ledger" ? "Forensic Audit Ledger" : page === "telephony" ? "Live SIP Intercept" : "VoiceShield Documentation"}
+                </h1>
+                <p className="text-[var(--color-text-secondary)]">
+                  {page === "ledger" ? "Immutable SHA-256 hash chain and origin decision signatures." :
+                   page === "telephony" ? "Connect to Asterisk PBX over SIP/WSS and monitor live phone calls." :
+                   "System architecture and compliance overview."}
+                </p>
+              </div>
+
+              {error && (
+                <div className="mb-6 p-4 rounded-lg bg-[var(--color-threat-critical-dim)] border border-[var(--color-border-threat)] text-[var(--color-threat-critical)] text-sm flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 shrink-0" />
+                  <div>{error}</div>
+                </div>
+              )}
+
+              {page === "ledger" && (
+                <LedgerPanel
+                  entries={ledger}
+                  calls={calls}
+                  onVerify={verify}
+                  verification={verification}
+                  verifying={verifying}
+                />
+              )}
+
+              {page === "telephony" && (
+                <div className="flex flex-col items-center justify-center p-12 text-center border border-[var(--color-border-subtle)] rounded-2xl bg-[var(--color-surface-glass)]">
+                  <div className="w-16 h-16 rounded-2xl bg-[var(--color-accent-indigo-dim)] border border-[var(--color-accent-indigo)] flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(99,102,241,0.2)]">
+                    <Radio className="w-8 h-8 text-[var(--color-accent-indigo)]" />
+                  </div>
+                  <h2 className="text-2xl font-bold text-[var(--color-text-primary)] mb-3">Real-Time Two-Way AI Voice Call</h2>
+                  <p className="text-[var(--color-text-secondary)] max-w-lg mb-8">
+                    Initiate an interactive live conversation with an AI Scammer bot. Speak into your microphone, hear the synthetic voice reply, and observe VoxGuard's real-time deepfake detection, risk scoring, and automated policy blocking.
+                  </p>
+                  <button
+                    onClick={() => setTwoWayCallOpen(true)}
+                    className="flex items-center gap-2 px-6 py-3 rounded-xl bg-[var(--color-accent-indigo)] text-white font-semibold hover:bg-indigo-600 transition-colors shadow-lg shadow-indigo-500/20"
+                  >
+                    <Activity className="w-5 h-5" /> Launch 2-Way Live Call
+                  </button>
+                </div>
+              )}
+
+              {page === "guide" && (
+                <div className="border border-[var(--color-border-subtle)] rounded-2xl bg-[var(--color-surface-glass)] p-8">
+                  <h2 className="text-xl font-bold text-[var(--color-text-primary)] mb-4">System Architecture & Compliance</h2>
+                  <p className="text-[var(--color-text-secondary)] mb-8">
+                    VoiceShield AI provides a real-time, explainable, and provably tamper-evident defense against generative voice cloning and impersonation attacks.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="bg-[var(--color-surface-layer)] p-6 rounded-xl border border-[var(--color-border-subtle)]">
+                      <h3 className="font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
+                        <Shield className="w-4 h-4 text-[var(--color-authentic)]" /> Core Invariants
+                      </h3>
+                      <ul className="space-y-3 text-sm text-[var(--color-text-secondary)]">
+                        <li className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-[var(--color-accent-blue)] mt-1.5 shrink-0"></div> Zero raw audio touches disk or broker logs.</li>
+                        <li className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-[var(--color-accent-blue)] mt-1.5 shrink-0"></div> Floors applied last via max() to prevent masking attacks.</li>
+                        <li className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-[var(--color-accent-blue)] mt-1.5 shrink-0"></div> Absence of evidence is UNKNOWN, never LOW.</li>
+                        <li className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-[var(--color-accent-blue)] mt-1.5 shrink-0"></div> Origin cryptographic signing on all decisions.</li>
+                      </ul>
+                    </div>
+
+                    <div className="bg-[var(--color-surface-layer)] p-6 rounded-xl border border-[var(--color-border-subtle)]">
+                      <h3 className="font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
+                        <CheckCircle className="w-4 h-4 text-[var(--color-safe)]" /> Compliance & Redress
+                      </h3>
+                      <ul className="space-y-3 text-sm text-[var(--color-text-secondary)]">
+                        <li className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-[var(--color-safe)] mt-1.5 shrink-0"></div> Complies with India DPDP Act & GDPR biometric constraints.</li>
+                        <li className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-[var(--color-safe)] mt-1.5 shrink-0"></div> Integrated customer dispute & appeal filing workflow.</li>
+                        <li className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-[var(--color-safe)] mt-1.5 shrink-0"></div> Closed-loop analyst resolution for continuous feedback.</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </main>
+
+      {renderModals()}
     </div>
   );
 }

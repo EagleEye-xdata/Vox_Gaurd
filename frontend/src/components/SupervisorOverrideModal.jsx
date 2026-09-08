@@ -21,34 +21,32 @@ export default function SupervisorOverrideModal({ call, isOpen, onClose, onOverr
   };
 
   return (
-    <div className="modal-overlay" style={{
-      position: "fixed", inset: 0, backgroundColor: "rgba(0, 0, 0, 0.75)",
-      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
-      backdropFilter: "blur(4px)"
-    }}>
-      <div className="panel" style={{ width: "90%", maxWidth: "520px", background: "var(--color-paper)", border: "1px solid var(--color-rule)", borderRadius: "8px", padding: "20px", boxShadow: "0 20px 40px rgba(0,0,0,0.5)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", borderBottom: "1px solid var(--color-rule)", paddingBottom: "12px" }}>
-          <h2 style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "16px" }}>
-            <Gavel size={18} color="var(--color-accent)" /> Supervisor Decision Override
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200">
+      <div className="w-[90%] max-w-[520px] bg-[var(--color-surface-elevated)] border border-[var(--color-border-subtle)] rounded-2xl p-6 shadow-2xl flex flex-col font-sans text-[var(--color-text-primary)]">
+
+        <div className="flex justify-between items-center mb-5 pb-4 border-b border-[var(--color-border-subtle)]">
+          <h2 className="flex items-center gap-2 text-base font-semibold">
+            <Gavel className="w-5 h-5 text-[var(--color-accent-indigo)]" /> Supervisor Decision Override
           </h2>
-          <button className="quiet" onClick={onClose} style={{ minHeight: "32px", padding: "4px" }}>
-            <X size={18} />
+          <button onClick={onClose} className="p-1 rounded hover:bg-[var(--color-hover-overlay)] transition-colors text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]">
+            <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div style={{ background: "var(--color-paper-2)", padding: "10px", borderRadius: "6px", marginBottom: "16px", fontSize: "13px" }}>
-          <div><strong>Session ID:</strong> {call.call_id}</div>
-          <div><strong>Current Automated Decision:</strong> {call.decision || "WARN"} (Risk: {Math.round(call.risk_score || 0)}/100)</div>
-          <div><strong>Policy:</strong> {call.policy_version}</div>
+        <div className="bg-[var(--color-surface-layer)] p-3 rounded-lg mb-5 text-sm border border-[var(--color-border-subtle)] flex flex-col gap-1">
+          <div><strong className="text-[var(--color-text-secondary)] font-medium">Session ID:</strong> <span className="font-mono text-xs">{call.call_id}</span></div>
+          <div><strong className="text-[var(--color-text-secondary)] font-medium">Current Automated Decision:</strong> <span className="text-[var(--color-threat-elevated)] font-medium">{call.decision || "WARN"}</span> (Risk: {Math.round(call.risk_score || 0)}/100)</div>
+          <div><strong className="text-[var(--color-text-secondary)] font-medium">Policy:</strong> {call.policy_version}</div>
         </div>
 
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-          <div>
-            <label style={{ display: "block", fontSize: "12px", color: "var(--color-muted)", marginBottom: "4px" }}>Target Override Decision:</label>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-[var(--color-text-tertiary)]">Target Override Decision:</label>
             <select
               value={decision}
               onChange={(e) => setDecision(e.target.value)}
-              style={{ width: "100%", padding: "8px", background: "var(--color-paper-3)", color: "var(--color-ink)", border: "1px solid var(--color-rule)", borderRadius: "4px" }}
+              className="w-full p-2.5 bg-[var(--color-surface-base)] text-[var(--color-text-primary)] border border-[var(--color-border-subtle)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-focus-ring)] transition-colors appearance-none"
             >
               <option value="ALLOW">ALLOW (Release holds, permit transaction)</option>
               <option value="WARN">WARN (Standard agent caution)</option>
@@ -58,22 +56,22 @@ export default function SupervisorOverrideModal({ call, isOpen, onClose, onOverr
             </select>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-            <div>
-              <label style={{ display: "block", fontSize: "12px", color: "var(--color-muted)", marginBottom: "4px" }}>Supervisor ID:</label>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-[var(--color-text-tertiary)]">Supervisor ID:</label>
               <input
                 type="text"
                 value={supervisorId}
                 onChange={(e) => setSupervisorId(e.target.value)}
-                style={{ width: "100%", padding: "8px", background: "var(--color-paper-3)", color: "var(--color-ink)", border: "1px solid var(--color-rule)", borderRadius: "4px" }}
+                className="w-full p-2.5 bg-[var(--color-surface-base)] text-[var(--color-text-primary)] border border-[var(--color-border-subtle)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-focus-ring)] transition-colors"
               />
             </div>
-            <div>
-              <label style={{ display: "block", fontSize: "12px", color: "var(--color-muted)", marginBottom: "4px" }}>Role:</label>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-[var(--color-text-tertiary)]">Role:</label>
               <select
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
-                style={{ width: "100%", padding: "8px", background: "var(--color-paper-3)", color: "var(--color-ink)", border: "1px solid var(--color-rule)", borderRadius: "4px" }}
+                className="w-full p-2.5 bg-[var(--color-surface-base)] text-[var(--color-text-primary)] border border-[var(--color-border-subtle)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-focus-ring)] transition-colors appearance-none"
               >
                 <option value="SUPERVISOR">SUPERVISOR</option>
                 <option value="FRAUD_ANALYST">FRAUD_ANALYST</option>
@@ -83,28 +81,34 @@ export default function SupervisorOverrideModal({ call, isOpen, onClose, onOverr
             </div>
           </div>
 
-          <div>
-            <label style={{ display: "block", fontSize: "12px", color: "var(--color-muted)", marginBottom: "4px" }}>Mandatory Justification Rationale:</label>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-[var(--color-text-tertiary)]">Mandatory Justification Rationale:</label>
             <textarea
               required
               minLength={5}
               placeholder="E.g. In-person branch verification completed or secondary biometric matched..."
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              style={{ width: "100%", padding: "8px", background: "var(--color-paper-3)", color: "var(--color-ink)", border: "1px solid var(--color-rule)", borderRadius: "4px", minHeight: "72px" }}
+              className="w-full p-3 bg-[var(--color-surface-base)] text-[var(--color-text-primary)] border border-[var(--color-border-subtle)] rounded-lg text-sm focus:outline-none focus:border-[var(--color-focus-ring)] transition-colors min-h-[80px] resize-none"
             />
           </div>
 
-          <p style={{ fontSize: "11px", color: "var(--color-subtle)", margin: 0 }}>
-            * This action produces a cryptographically signed WAL entry and is permanently logged in the audit ledger.
-          </p>
+          <div className="flex items-start gap-2 mt-1">
+            <ShieldCheck className="w-4 h-4 text-[var(--color-text-tertiary)] shrink-0 mt-0.5" />
+            <p className="text-[11px] text-[var(--color-text-tertiary)] leading-snug">
+              This action produces a cryptographically signed WAL entry and is permanently logged in the immutable audit ledger.
+            </p>
+          </div>
 
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "12px" }}>
-            <button type="button" className="quiet" onClick={onClose}>Cancel</button>
-            <button type="submit" disabled={busy || reason.trim().length < 5} style={{ background: "var(--color-accent)", color: "var(--color-accent-ink)", fontWeight: 600 }}>
-              Apply Signed Override
+          <div className="flex justify-end gap-3 mt-4 pt-4 border-t border-[var(--color-border-subtle)]">
+            <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-hover-overlay)] transition-colors">
+              Cancel
+            </button>
+            <button type="submit" disabled={busy || reason.trim().length < 5} className="px-5 py-2 rounded-lg text-sm font-medium bg-[var(--color-accent-indigo)] text-white hover:bg-[#4f46e5] disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-transparent focus:outline-none focus:border-[var(--color-focus-ring)] focus:ring-2 focus:ring-[var(--color-focus-ring)]">
+              {busy ? "Applying..." : "Apply Signed Override"}
             </button>
           </div>
+
         </form>
       </div>
     </div>

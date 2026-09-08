@@ -63,6 +63,7 @@ func (s *Server) Routes() http.Handler {
 	// Audio in flight only: these two stream their bodies to the Python sidecar unparsed.
 	mux.HandleFunc("POST /api/v1/detect", s.proxyDetect)
 	mux.HandleFunc("POST /api/v1/enrolments", s.proxyEnrol)
+	mux.HandleFunc("POST /api/v1/chat", s.proxyChat)
 	mux.HandleFunc("GET /api/v1/enrolments", s.listEnrolments)
 	mux.HandleFunc("DELETE /api/v1/enrolments/{identity_id}", s.revokeEnrolment)
 
@@ -397,6 +398,11 @@ func (s *Server) proxyDetect(w http.ResponseWriter, r *http.Request) {
 // deliberately has no say, so there is no path by which a gateway change could bypass it.
 func (s *Server) proxyEnrol(w http.ResponseWriter, r *http.Request) {
 	s.Sidecar.Proxy(w, r, "/internal/enrolments")
+}
+
+// proxyChat streams POST /api/v1/chat to the sidecar for LLM deepfake generation.
+func (s *Server) proxyChat(w http.ResponseWriter, r *http.Request) {
+	s.Sidecar.Proxy(w, r, "/internal/chat")
 }
 
 func (s *Server) listEnrolments(w http.ResponseWriter, r *http.Request) {

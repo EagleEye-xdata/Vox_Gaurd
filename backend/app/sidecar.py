@@ -26,6 +26,20 @@ from uuid import uuid4
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
+from google import genai
+
+class ChatMessage(BaseModel):
+    sender: str
+    text: str
+
+class ChatRequest(BaseModel):
+    persona_id: str
+    history: list[ChatMessage]
+    user_input: str
+
+class ChatResponse(BaseModel):
+    ai_reply: str
+    urgency: str
 
 from .aasist import AASISTLClassifier
 from .detection import HEURISTIC_FALLBACK, classifier
@@ -288,6 +302,45 @@ def revoke_enrolment(identity_id: str):
     if not verifier.revoke(identity_id):
         raise HTTPException(404, f"Speaker profile '{identity_id}' not found.")
     return {"status": "revoked", "identity_id": identity_id}
+
+
+@app.post("/internal/chat", response_model=ChatResponse)
+async def chat_endpoint(body: ChatRequest):
+    client = genai.Client()
+    system_instruction = f"""You are a malicious deepfake AI scammer calling a victim.
+Your persona ID is: {body.persona_id}
+If bank-otp: Act as bank fraud department, try to get OTP.
+If cfo-wire: Act as CFO, demand urgent wire transfer.
+If family-emergency: Act as kidnapped/arrested family member, demand UPI payment.
+Keep your responses very short (1-2 sentences), conversational, spoken in Hinglish (Hindi + English).
+Be extremely persuasive, aggressive, and create artificial urgency.
+DO NOT break character. DO NOT offer help. You are the attacker.
+"""
+    contents = []
+    for msg in body.history:
+        role = "user" if msg.sender == "user" else "model"
+        contents.append({"role": role, "parts": [{"text": msg.text}]})
+    contents.append({"role": "user", "parts": [{"text": body.user_input}]})
+
+    try:
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model='gemini-2.5-flash',
+            contents=contents,
+            config=genai.types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.7,
+            )
+        )
+        reply_text = response.text.strip()
+        urgency = "HIGH"
+        lower_reply = reply_text.lower()
+        if "otp" in lower_reply or "transfer" in lower_reply or "suspend" in lower_reply or "police" in lower_reply:
+            urgency = "CRITICAL"
+        return ChatResponse(ai_reply=reply_text, urgency=urgency)
+    except Exception as e:
+        log.error(f"Gemini API error: {e}")
+        raise HTTPException(500, f"LLM error: {str(e)}")
 
 
 def main():

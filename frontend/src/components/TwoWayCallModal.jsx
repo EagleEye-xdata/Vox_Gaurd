@@ -140,10 +140,11 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
     api("/stream/start", {
       filename: "fixture-steady.wav",
       label: `2-Way Call: Human vs ${selectedPersona.name}`,
-      amount: 250000,
-      known_beneficiary: false,
-      new_beneficiary: true,
-      request_urgency: "high",
+      context: {
+        transaction_value: 250000,
+        beneficiary_is_new: true,
+        request_urgency: "high"
+      },
       simulate_detector_failure: false,
       interval: 1.0,
     })
@@ -267,7 +268,7 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 1.04;
     utterance.pitch = 0.92;
-    
+
     const voices = window.speechSynthesis.getVoices();
     const hindiOrIndianVoice = voices.find((v) =>
       v.lang.includes("hi-IN") || v.lang.includes("en-IN") || v.name.includes("India")
@@ -311,7 +312,7 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
   };
 
   // Handle User Message / Reply (Human Side)
-  const handleUserReply = (userText) => {
+  const handleUserReply = async (userText) => {
     if (!userText || !userText.trim() || callStatus !== "connected") return;
 
     const newMsgs = [
@@ -323,40 +324,36 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
     const newTurn = turnCount + 1;
     setTurnCount(newTurn);
 
-    // If turns reach 2 or more, escalate risk and trigger auto-block
-    if (newTurn >= 2) {
-      setTimeout(() => {
-        const escalationReply = "Kripya time mat waste kijiye, agar OTP nahi bataya toh abhi ke abhi aapka bank account permanent suspend ho jayega!";
-        setMessages((prev) => [
-          ...prev,
-          { sender: "ai", text: escalationReply, time: new Date().toLocaleTimeString() }
-        ]);
-        speakAi(escalationReply);
-        
-        // Auto block on critical risk escalation after 2.2 seconds
-        setTimeout(() => {
-          triggerBlockAction("AUTOMATED_INTERVENTION_CRITICAL_SYNTHETIC_FRAUD");
-        }, 2200);
-      }, 500);
-      return;
-    }
+    try {
+      const response = await api("/chat", {
+        persona_id: selectedPersona.id,
+        history: messages.map(m => ({ sender: m.sender, text: m.text })),
+        user_input: userText
+      });
 
-    // Find AI response based on trigger keyword
-    const lower = userText.toLowerCase();
-    const matched = selectedPersona.responses.find((r) =>
-      lower.includes(r.trigger)
-    ) || selectedPersona.responses[selectedPersona.responses.length - 1];
-
-    setTimeout(() => {
-      const aiReplyText = matched.aiReply;
       setMessages((prev) => [
         ...prev,
-        { sender: "ai", text: aiReplyText, time: new Date().toLocaleTimeString() }
+        { sender: "ai", text: response.ai_reply, time: new Date().toLocaleTimeString() }
       ]);
-      speakAi(aiReplyText);
-      setRiskScore(88);
-      setVerdict("STEP_UP (Elevated Synthetic Risk)");
-    }, 600);
+      speakAi(response.ai_reply);
+
+      if (response.urgency === "CRITICAL") {
+        setRiskScore(95);
+        setVerdict("CRITICAL (Automated Block Pending)");
+        setTimeout(() => {
+          triggerBlockAction("AUTOMATED_INTERVENTION_CRITICAL_SYNTHETIC_FRAUD");
+        }, 4000);
+      } else {
+        setRiskScore(88);
+        setVerdict("STEP_UP (Elevated Synthetic Risk)");
+      }
+    } catch (err) {
+      console.error("Chat API failed:", err);
+      setMessages((prev) => [
+        ...prev,
+        { sender: "ai", text: "System degraded. Unable to connect to ML backend.", time: new Date().toLocaleTimeString() }
+      ]);
+    }
   };
 
   const handleHangup = () => {
@@ -591,8 +588,40 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
           {/* Controls visible only if not blocked */}
           {callStatus === "connected" && (
             <>
+              {/* Custom Reply Input */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleUserReply(customInput);
+                }}
+                style={{ display: "flex", gap: 8, marginTop: "8px" }}
+              >
+                <input
+                  type="text"
+                  placeholder="Speak or type your response to the AI..."
+                  value={customInput}
+                  onChange={(e) => setCustomInput(e.target.value)}
+                  style={{
+                    flex: 1,
+                    padding: "10px 14px",
+                    background: "rgba(0,0,0,0.3)",
+                    border: "1px solid rgba(255,255,255,0.2)",
+                    borderRadius: 8,
+                    color: "white",
+                    fontSize: 13,
+                  }}
+                />
+                <button
+                  type="submit"
+                  className="twoway-btn secondary"
+                  style={{ padding: "8px 14px", background: "rgba(16, 185, 129, 0.2)", border: "1px solid rgba(16, 185, 129, 0.4)", color: "#10b981" }}
+                >
+                  <Send size={15} />
+                </button>
+              </form>
+
               {/* Quick Voice Reply Options */}
-              <div style={{ fontSize: 11, color: "#94a3b8" }}>Quick Responses (Click to speak):</div>
+              <div style={{ fontSize: 11, color: "#94a3b8", marginTop: "12px" }}>Quick Responses (Click to speak):</div>
               <div className="twoway-quick-replies">
                 {selectedPersona.quickReplies.map((reply, i) => (
                   <button
@@ -604,38 +633,6 @@ export default function TwoWayCallModal({ isOpen, onClose, onSessionCreated }) {
                   </button>
                 ))}
               </div>
-
-              {/* Custom Reply Input */}
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  handleUserReply(customInput);
-                }}
-                style={{ display: "flex", gap: 8 }}
-              >
-                <input
-                  type="text"
-                  placeholder="Speak or type your response to the AI..."
-                  value={customInput}
-                  onChange={(e) => setCustomInput(e.target.value)}
-                  style={{
-                    flex: 1,
-                    padding: "8px 14px",
-                    background: "rgba(255,255,255,0.05)",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    borderRadius: 8,
-                    color: "white",
-                    fontSize: 13,
-                  }}
-                />
-                <button
-                  type="submit"
-                  className="twoway-btn secondary"
-                  style={{ padding: "8px 14px" }}
-                >
-                  <Send size={15} />
-                </button>
-              </form>
             </>
           )}
         </div>
