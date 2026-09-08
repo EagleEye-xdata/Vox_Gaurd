@@ -155,11 +155,25 @@ def analyse_buffer(audio: np.ndarray, identity_id: str | None = None) -> dict:
         verification = verifier.verify(features, identity_id) if identity_id else None
 
         # --- Intent / Content Risk (Step 5) ----------------------------------------------
+        intent_audio = np.array(audio, dtype=np.float32)
         try:
-            intent_result = intent_scorer.score(np.array(audio, dtype=np.float32), SAMPLE_RATE)
+            intent_result = intent_scorer.score(intent_audio, SAMPLE_RATE)
         except Exception as intent_err:
-            log.warning("Intent scorer failed on window, I_risk defaulting to 0: %s", intent_err)
+            log.warning("Intent scorer failed on window; marking I_risk unavailable: %s", intent_err)
             intent_result = intent_scorer.IntentResult()
+        finally:
+            # score() promises not to retain the buffer; erase this sidecar-owned
+            # copy even when a scorer implementation raises unexpectedly.
+            intent_audio.fill(0)
+
+        # A missing or failed transcription is not evidence of benign intent.
+        # Send null so Go renormalises this signal out instead of accepting a
+        # fabricated 0.0 as a low-risk score.
+        i_risk = (
+            intent_result.i_risk
+            if intent_result.whisper_available and intent_result.error is None
+            else None
+        )
 
         # --- Prosody & Behavioural Analysis (PS requirement — separate layer) --------------
         # Runs on the pre-filtered `processed` signal (VAD-gated, bandpass-filtered).
@@ -198,7 +212,7 @@ def analyse_buffer(audio: np.ndarray, identity_id: str | None = None) -> dict:
             "features": features,
             "verification": verification,
             # Intent branch — I_risk for Go fusion
-            "i_risk": intent_result.i_risk,
+            "i_risk": i_risk,
             "intent": {
                 "transcript": intent_result.transcript,
                 "matched_phrases": intent_result.matched_phrases,
@@ -207,6 +221,7 @@ def analyse_buffer(audio: np.ndarray, identity_id: str | None = None) -> dict:
                 "language_detected": intent_result.language_detected,
                 "latency_ms": intent_result.latency_ms,
                 "error": intent_result.error,
+                "model_diagnostics": intent_result.model_diagnostics,
             },
             # Prosody branch — dedicated behavioral analysis (PS explicit requirement)
             "prosody_risk": prosody_result.prosody_risk,
@@ -244,7 +259,7 @@ def analyse_buffer(audio: np.ndarray, identity_id: str | None = None) -> dict:
                 identity_id=identity_id,
                 p_synthetic=result_dict["p_synthetic"],
                 prosody_risk=prosody_result.prosody_risk,
-                i_risk=intent_result.i_risk,
+                i_risk=i_risk,
                 drift_score=drift_result.drift_score if drift_result else None,
                 match_score=(verification or {}).get("match_score"),
                 features=features,

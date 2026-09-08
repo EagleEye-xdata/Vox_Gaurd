@@ -252,6 +252,14 @@ def test_consent_log_gates_every_human_voice_file():
     for wav in (ROOT / 'demo_audio').glob('*.wav'):
         if wav.name.startswith(('fixture-', 'tts-')):
             continue
+        # The Asterisk adapter streams live call audio through a named pipe in this
+        # directory (telephony_adapter/server.py). A FIFO holds no bytes, so it cannot
+        # be stored unconsented audio -- and an aborted run leaves one behind, which
+        # made this control fail on a file that was never a recording. Path.is_file()
+        # is False for a FIFO, so this skips pipes while still catching any regular
+        # file that happens to be named live-*.wav.
+        if not wav.is_file():
+            continue
         matched = re.match(r'consented-(P-\d+)-', wav.name)
         if not matched:
             offenders.append(f'{wav.name}: no consent-log reference in the filename')

@@ -23,6 +23,7 @@ import (
 	"github.com/vox-guard/voxguard/gateway/internal/policy"
 	"github.com/vox-guard/voxguard/gateway/internal/scoring"
 	"github.com/vox-guard/voxguard/gateway/internal/sidecar"
+	"github.com/vox-guard/voxguard/gateway/internal/telephony"
 )
 
 // MaxConcurrentStreams bounds simultaneous demo calls.
@@ -201,11 +202,21 @@ type Manager struct {
 	alerts    *alerts.Store
 	ledger    *ledger.Ledger
 	pack      policy.Pack
+	blocker   telephony.Blocker
 
 	// onLedgerError is called when an audit write fails. Audit is an interface, not a dependency
 	// (docs/01 section 1.5): a ledger outage must not stop the call being scored, but it must not
 	// pass unnoticed either.
 	onLedgerError func(error)
+}
+
+// SetBlocker attaches the transport-specific call terminator. It is deliberately
+// configured separately from NewManager so existing embedders keep the same
+// construction contract and can opt into their appropriate PBX implementation.
+func (m *Manager) SetBlocker(blocker telephony.Blocker) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.blocker = blocker
 }
 
 // NewManager builds the orchestrator.
@@ -349,7 +360,7 @@ func (m *Manager) StartLive(callID string, opts StartOptions, modelVersions map[
 		public: PublicCall{
 			CallID: callID, Label: opts.Label, Filename: opts.Filename, Status: "streaming",
 			StartedAt: nowISO(), Band: "UNKNOWN", Decision: "WARN", History: []float64{},
-			BandTimeline: []scoring.BandPoint{{Window: 0, Band: "UNKNOWN"}},
+			BandTimeline:    []scoring.BandPoint{{Window: 0, Band: "UNKNOWN"}},
 			DegradedReasons: []string{}, ContributingFactors: []scoring.Factor{},
 			AppliedFloors: []scoring.Floor{}, ContextDetails: []scoring.ContextDetail{},
 			Language: opts.Language, LanguageSupported: m.pack.SupportsLanguage(opts.Language),
@@ -513,7 +524,10 @@ func (m *Manager) foldWindow(call *Call, window sidecar.Window, opts StartOption
 		}
 	}
 
-	result, err := scoring.ScoreWindow(det, call.ctx, ver, m.pack)
+	// Intent is derived for each audio window, whereas call.ctx is session-level
+	// context supplied at call creation. Pass it separately so an old I_risk
+	// cannot bleed into later windows and a missing context remains degraded.
+	result, err := scoring.ScoreWindowWithIntent(det, call.ctx, ver, window.IRisk, m.pack)
 	if err != nil {
 		// A match_score contract violation is a bug in the verifier, not a scoreable condition.
 		// Failing the call is correct: silently coercing it is what CLAUDE.md invariant 7 forbids.
@@ -563,6 +577,22 @@ func (m *Manager) foldWindow(call *Call, window sidecar.Window, opts StartOption
 		})
 	}
 
+	// A BLOCK decision must be sealed before the call is terminated. Otherwise a
+	// successful hangup can erase the only evidence that the gateway made the
+	// decision. The call is marked stopped only after the blocker succeeds; a
+	// failed hangup remains visible to the operator as a live, high-risk call.
+	if dec.Decision == "BLOCK" {
+		m.audit(map[string]any{
+			"call_id": public.CallID, "event_type": "block_decision",
+			"risk_score": derefScore(public.RiskScore), "band": public.Band,
+			"policy_version": m.pack.Version, "model_versions": toAny(modelVersions),
+			"decision": dec.Decision, "reason_code": dec.ReasonCode,
+		})
+		if m.enforceBlock(public.CallID, dec.ReasonCode) {
+			public, _ = m.Stop(public.CallID)
+		}
+	}
+
 	// CLAUDE.md invariant 11: the alert is keyed by the escalation, so a session that holds HIGH
 	// for the rest of the call raises nothing further.
 	if verdict.AlertKey != nil {
@@ -575,6 +605,31 @@ func (m *Manager) foldWindow(call *Call, window sidecar.Window, opts StartOption
 		LatencyMS: window.LatencyMS, Features: window.Features,
 		SpeechRatio: window.SpeechRatio, Call: &public,
 	})
+}
+
+// enforceBlock terminates a call after its decision record has been appended.
+// Returning false deliberately leaves the call active: displaying it as blocked
+// when the PBX hangup failed would mislead the operator.
+func (m *Manager) enforceBlock(callID, reason string) bool {
+	m.mu.RLock()
+	blocker := m.blocker
+	m.mu.RUnlock()
+	if blocker == nil {
+		m.audit(map[string]any{
+			"call_id": callID, "event_type": "block_not_enforced",
+			"reason": "no_call_blocker_configured", "policy_version": m.pack.Version,
+		})
+		return false
+	}
+
+	err := telephony.EnforceBlock(context.Background(), blocker, callID, reason,
+		func(id, why string, failure error) {
+			m.audit(map[string]any{
+				"call_id": id, "event_type": "block_hangup_failed", "reason": why,
+				"error": failure.Error(), "policy_version": m.pack.Version,
+			})
+		}, nil)
+	return err == nil
 }
 
 // latestPayload assembles the per-window detail the dashboard renders.

@@ -163,6 +163,18 @@ var signalOrder = []string{"ai", "speaker", "context", "intent"}
 // defect that made HIGH unreachable), the trust discount applies to the base only, and the floors
 // are combined last with max() rather than added (invariant 3).
 func ScoreWindow(d *Detection, c *Context, v *Verification, p policy.Pack) (*WindowResult, error) {
+	var intentRisk *float64
+	if c != nil {
+		intentRisk = c.IntentRisk
+	}
+	return ScoreWindowWithIntent(d, c, v, intentRisk, p)
+}
+
+// ScoreWindowWithIntent fuses a window's sidecar-supplied intent score without
+// mutating the call-level context. Intent is derived afresh for every audio
+// window; keeping it separate prevents a prior window's score leaking into the
+// next one and preserves the context-unavailable degraded floor.
+func ScoreWindowWithIntent(d *Detection, c *Context, v *Verification, intentRisk *float64, p policy.Pack) (*WindowResult, error) {
 	active := map[string]float64{}
 	terms := map[string]float64{}
 	inactive := map[string]string{}
@@ -239,8 +251,8 @@ func ScoreWindow(d *Detection, c *Context, v *Verification, p policy.Pack) (*Win
 	// IntentRisk is the 0.15-weighted 4th signal. When Whisper is not available the
 	// Python sidecar returns nil; we renormalise the remaining three over 0.85 rather
 	// than leaving 0.15 floating as a phantom safe-intent score.
-	if c != nil && c.IntentRisk != nil {
-		terms["intent"] = *c.IntentRisk
+	if intentRisk != nil {
+		terms["intent"] = *intentRisk
 		active["intent"] = p.Weights.Intent
 	} else {
 		inactive["intent"] = "intent_scorer_unavailable"

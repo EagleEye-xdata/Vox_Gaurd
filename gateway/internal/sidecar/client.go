@@ -114,13 +114,13 @@ type Window struct {
 
 // IntentMetadata carries diagnostics from the intent scorer for operator transparency.
 type IntentMetadata struct {
-	Transcript        string   `json:"transcript"`
-	MatchedPhrases    []string `json:"matched_phrases"`
-	HeuristicHits     []string `json:"heuristic_hits"`
-	WhisperAvailable  bool     `json:"whisper_available"`
-	LanguageDetected  *string  `json:"language_detected,omitempty"`
-	LatencyMS         float64  `json:"latency_ms"`
-	Error             *string  `json:"error,omitempty"`
+	Transcript       string   `json:"transcript"`
+	MatchedPhrases   []string `json:"matched_phrases"`
+	HeuristicHits    []string `json:"heuristic_hits"`
+	WhisperAvailable bool     `json:"whisper_available"`
+	LanguageDetected *string  `json:"language_detected,omitempty"`
+	LatencyMS        float64  `json:"latency_ms"`
+	Error            *string  `json:"error,omitempty"`
 }
 
 // Validate rejects malformed derived windows at the private Python-to-Go boundary. Audio is
@@ -154,6 +154,9 @@ func (w *Window) Validate() error {
 	if strings.TrimSpace(w.ModelVersion) == "" || strings.TrimSpace(w.CalibratorVersion) == "" {
 		return fmt.Errorf("model_version and calibrator_version are required")
 	}
+	if w.IRisk != nil && !finiteBetween(*w.IRisk, 0, 1) {
+		return fmt.Errorf("i_risk must be a finite number between 0 and 1")
+	}
 	if v := w.Verification; v != nil {
 		if !v.ReferenceAvailable && v.MatchScore != nil {
 			return fmt.Errorf("match_score must be absent when reference_available is false")
@@ -171,7 +174,6 @@ func (w *Window) Validate() error {
 func finiteBetween(value, low, high float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= low && value <= high
 }
-
 
 // Enrolment is an enrolled speaker profile as listed by the sidecar.
 type Enrolment struct {
@@ -253,7 +255,6 @@ func (c *Client) Enrolments(ctx context.Context) ([]Enrolment, error) {
 func (c *Client) RevokeEnrolment(ctx context.Context, identityID string) error {
 	return c.do(ctx, http.MethodDelete, "/internal/enrolments/"+url.PathEscape(identityID), nil, nil)
 }
-
 
 // Proxy streams a request straight through to the sidecar under the given path.
 //

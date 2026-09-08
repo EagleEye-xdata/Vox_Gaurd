@@ -18,3 +18,16 @@ onnxruntime>=1.18,<2
 # research/demo-only, the same posture CLAUDE.md decision D-3 records for MLAAD.
 torch>=2.2,<3
 transformers>=4.44,<5
+
+# ---------------------------------------------------------------------------
+# Added by voxguard_setup.py
+# ---------------------------------------------------------------------------
+# faster-whisper replaces openai-whisper, which was referenced by app/intent.py
+# but never listed here -- so intent scoring silently returned I_risk = 0.0 on
+# every window. CTranslate2 int8 on CPU; `small` here beats the old `tiny`.
+faster-whisper>=1.0,<2
+
+# Trained intent classifier (app/intent_model.py). Sentence embeddings are what
+# let it score paraphrases the regex lexicon structurally cannot see.
+sentence-transformers>=3.0
+joblib>=1.3
