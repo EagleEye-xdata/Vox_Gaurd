@@ -1,0 +1,37 @@
+{
+  "otp_request": {
+    "pr_auc_indist": 0.9508,
+    "pr_auc_ood": 0.9659,
+    "threshold": 0.7308
+  },
+  "credential_request": {
+    "pr_auc_indist": 0.809,
+    "pr_auc_ood": 0.7202,
+    "threshold": 0.7575
+  },
+  "pii_request": {
+    "pr_auc_indist": 0.8963,
+    "pr_auc_ood": 0.8254,
+    "threshold": 0.7937
+  },
+  "payment_pressure": {
+    "pr_auc_indist": 0.9764,
+    "pr_auc_ood": 0.7667,
+    "threshold": 0.2702
+  },
+  "authority_impersonation": {
+    "pr_auc_indist": 0.9599,
+    "pr_auc_ood": 0.5304,
+    "threshold": 0.8
+  },
+  "urgency_threat": {
+    "pr_auc_indist": 0.9292,
+    "pr_auc_ood": 0.6789,
+    "threshold": 0.8
+  },
+  "_ood": {
+    "n": 68,
+    "detection_rate": 0.6176,
+    "benign_fpr": 0.1765
+  }
+}

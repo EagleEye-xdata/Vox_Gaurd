@@ -149,11 +149,12 @@ var factorNames = map[string]string{
 	"ai":      "ai_synthetic",
 	"speaker": "speaker_mismatch",
 	"context": "context_risk",
+	"intent":  "intent_risk",
 }
 
 // signalOrder fixes the top-level signal order so active_signals and contributing_factors are
 // deterministic and match the Python dict insertion order.
-var signalOrder = []string{"ai", "speaker", "context"}
+var signalOrder = []string{"ai", "speaker", "context", "intent"}
 
 // ScoreWindow fuses one window's signals into a 0-100 score (03 section 1).
 //
@@ -162,6 +163,18 @@ var signalOrder = []string{"ai", "speaker", "context"}
 // defect that made HIGH unreachable), the trust discount applies to the base only, and the floors
 // are combined last with max() rather than added (invariant 3).
 func ScoreWindow(d *Detection, c *Context, v *Verification, p policy.Pack) (*WindowResult, error) {
+	var intentRisk *float64
+	if c != nil {
+		intentRisk = c.IntentRisk
+	}
+	return ScoreWindowWithIntent(d, c, v, intentRisk, p)
+}
+
+// ScoreWindowWithIntent fuses a window's sidecar-supplied intent score without
+// mutating the call-level context. Intent is derived afresh for every audio
+// window; keeping it separate prevents a prior window's score leaking into the
+// next one and preserves the context-unavailable degraded floor.
+func ScoreWindowWithIntent(d *Detection, c *Context, v *Verification, intentRisk *float64, p policy.Pack) (*WindowResult, error) {
 	active := map[string]float64{}
 	terms := map[string]float64{}
 	inactive := map[string]string{}
@@ -232,6 +245,17 @@ func ScoreWindow(d *Detection, c *Context, v *Verification, p policy.Pack) (*Win
 			terms["context"] = *value
 			active["context"] = p.Weights.Context
 		}
+	}
+
+	// --- Intent / Content Risk signal (I_risk from Whisper STT) --------------------------
+	// IntentRisk is the 0.15-weighted 4th signal. When Whisper is not available the
+	// Python sidecar returns nil; we renormalise the remaining three over 0.85 rather
+	// than leaving 0.15 floating as a phantom safe-intent score.
+	if intentRisk != nil {
+		terms["intent"] = *intentRisk
+		active["intent"] = p.Weights.Intent
+	} else {
+		inactive["intent"] = "intent_scorer_unavailable"
 	}
 
 	// --- Floors from adversarial conditions ----------------------------------------------

@@ -23,6 +23,7 @@ import (
 	"github.com/vox-guard/voxguard/gateway/internal/policy"
 	"github.com/vox-guard/voxguard/gateway/internal/session"
 	"github.com/vox-guard/voxguard/gateway/internal/sidecar"
+	"github.com/vox-guard/voxguard/gateway/internal/telephony"
 )
 
 func main() {
@@ -66,6 +67,10 @@ func main() {
 		// stop the call being scored, and must not pass silently either.
 		log.Error("audit write failed", "error", err)
 	})
+	// The browser demo has no PBX channel to close, but it must still take the
+	// same termination path as a deployment. A production bootstrap can replace
+	// this with telephony.NewAsteriskBlocker without changing policy code.
+	sessions.SetBlocker(&telephony.LoopbackBlocker{Log: log})
 
 	server := &httpapi.Server{
 		Sessions: sessions, Decisions: decisions, Alerts: alertStore,

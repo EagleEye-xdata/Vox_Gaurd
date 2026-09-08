@@ -36,6 +36,10 @@ type Weights struct {
 	AI      float64 `json:"ai"`
 	Speaker float64 `json:"speaker"`
 	Context float64 `json:"context"`
+	// Intent is the weight for the Whisper STT intent-risk signal (I_risk).
+	// When the intent scorer is unavailable the signal is renormalised out, so the
+	// remaining three absorb its weight proportionally.
+	Intent float64 `json:"intent"`
 }
 
 // ContextWeights are the context sub-signal weights, renormalised over present sub-signals.
@@ -60,8 +64,8 @@ type Bands struct {
 // mandatory-verification floor of 50 would pin every window to Elevated. Deviation DEV-1 in
 // docs/HANDOFF.md.
 var Default = Pack{
-	Version:                      "demo-detector-first@2.1.0",
-	Weights:                      Weights{AI: 0.60, Speaker: 0.20, Context: 0.20},
+	Version:                      "demo-detector-first@2.2.0",
+	Weights:                      Weights{AI: 0.55, Speaker: 0.15, Context: 0.15, Intent: 0.15},
 	ContextWeights:               ContextWeights{Attestation: 0.25, Urgency: 0.15, History: 0.20, Transaction: 0.40},
 	Bands:                        Bands{MediumMin: 40, HighMin: 70},
 	RoutineTransactionThreshold:  50000,
@@ -101,6 +105,8 @@ func (p Pack) SignalWeight(key string) float64 {
 		return p.Weights.Speaker
 	case "context":
 		return p.Weights.Context
+	case "intent":
+		return p.Weights.Intent
 	}
 	return 0
 }

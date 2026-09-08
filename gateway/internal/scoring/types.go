@@ -51,6 +51,11 @@ type Context struct {
 	RequestUrgency         *string  `json:"request_urgency,omitempty"`
 	UrgencySource          *string  `json:"urgency_source,omitempty"`
 	ConfirmedFraudFlags90d *int     `json:"confirmed_fraud_flags_90d,omitempty"`
+	// IntentRisk is the I_risk ∈ [0,1] score produced by the Python intent scorer
+	// (Whisper STT + vishing-phrase classifier). A nil pointer means the intent
+	// branch was unavailable for this window; it is renormalised out rather than
+	// treated as a safe-intent signal (CLAUDE.md invariant 2).
+	IntentRisk *float64 `json:"intent_risk,omitempty"`
 
 	// keys counts the members actually present in the decoded object. The Python code branches on
 	// `not context`, and in Python an empty dict is falsy while a populated one is not. Without

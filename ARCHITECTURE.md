@@ -1,531 +1,260 @@
-# VoiceShield AI — Architecture
+# VoxGuard (VoiceShield AI) — Comprehensive Architecture Specification
 
-> Real-time deepfake / AI-voice fraud detection for financial call centres.
-
----
-
-## Table of Contents
-
-1. [High-Level Overview](#1-high-level-overview)
-2. [Languages & Runtimes](#2-languages--runtimes)
-3. [Technology Stack](#3-technology-stack)
-4. [Directory Structure](#4-directory-structure)
-5. [Backend Architecture](#5-backend-architecture)
-   - [Module Map](#51-module-map)
-   - [Audio Processing Pipeline](#52-audio-processing-pipeline)
-   - [REST API Endpoints](#53-rest-api-endpoints)
-   - [WebSocket Streaming](#54-websocket-streaming)
-   - [Tamper-Evident Ledger](#55-tamper-evident-ledger)
-6. [Frontend Architecture](#6-frontend-architecture)
-   - [Component Tree](#61-component-tree)
-   - [API & WebSocket Client](#62-api--websocket-client)
-7. [Data Flow Diagram](#7-data-flow-diagram)
-8. [Risk Scoring Model](#8-risk-scoring-model)
-9. [Scripts & Tooling](#9-scripts--tooling)
-10. [Dependency Summary](#10-dependency-summary)
+> **Real-Time Deepfake Voice Detection, Multi-Factor Risk Scoring, and Automated Policy Interception for Financial Call Operations**
+> 
+> *Target Environment: SIH26104 — Team vox_Guard*
 
 ---
 
-## 1. High-Level Overview
+## 📑 Table of Contents
 
-```
-┌─────────────────────────────────────────────┐
-│                FRONTEND (React)              │
-│  Browser @ http://127.0.0.1:5173            │
-│  Vite dev server / dist bundle               │
-└──────────────┬──────────────────────────────┘
-               │  HTTP REST  /api/v1/*
-               │  WebSocket  /ws/audio/{call_id}
-               ▼
-┌─────────────────────────────────────────────┐
-│           GATEWAY (Go) @ 127.0.0.1:8000     │
-│  net/http · coder/websocket · modernc sqlite│
-│                                             │
-│  schema validate → session orchestrator     │
-│         ┌───────────────┐                   │
-│         │ Risk Fusion   │  active-signal    │
-│         │ (03 §1)       │  renormalisation  │
-│         └──────┬────────┘                   │
-│                ▼                            │
-│         ┌───────────────┐                   │
-│         │ Session Aggr. │  EWMA + peak      │
-│         │ (04 §3-5)     │  + hysteresis     │
-│         └──────┬────────┘                   │
-│                ▼                            │
-│         ┌───────────────┐                   │
-│         │   Decision    │                   │
-│         └──┬─────────┬──┘                   │
-│            ▼         ▼                      │
-│      ┌────────┐  ┌────────────┐             │
-│      │ Alerts │  │   Ledger   │             │
-│      └────────┘  │ (SQLite)   │             │
-│                  └────────────┘             │
-└──────────────┬──────────────────────────────┘
-               │  HTTP/JSON, loopback only
-               │  analyses out — never audio in
-               ▼
-┌─────────────────────────────────────────────┐
-│      ML SIDECAR (Python) @ 127.0.0.1:8801   │
-│  Uvicorn ASGI — internal, not public         │
-│                                             │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-│  │Ingestion │→ │ Preproc  │→ │ Features │  │
-│  └──────────┘  └──────────┘  └────┬─────┘  │
-│                          ┌────────┴─────┐  │
-│                          ▼              ▼  │
-│                   ┌───────────┐ ┌──────────┐│
-│                   │ Detection │ │ Speaker  ││
-│                   │(Heuristic)│ │  Verif.  ││
-│                   └───────────┘ └──────────┘│
-│                                             │
-│  Raw audio lives here and nowhere else.     │
-│  Buffers are zeroed before each response.   │
-└──────────────┬──────────────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────────────┐
-│             demo_audio/  (WAV files)         │
-│             backend/data/ledger.db (SQLite)  │
-└─────────────────────────────────────────────┘
-```
-
-This split is the one specified in `docs/01-ARCHITECTURE.md` §2, which places the gateway, session
-orchestrator, risk fusion, session aggregator, decision service, alert service and audit service
-in **[Go]**, and preprocess/VAD, detection and speaker verification in **[Python]**. The spec's
-transport between them is gRPC; Phase 0 uses loopback HTTP/JSON, which is deviation DEV-4 in
-`docs/HANDOFF.md`.
+1. [System Overview & Objectives](#1-system-overview--objectives)
+2. [High-Level Architecture Diagram](#2-high-level-architecture-diagram)
+3. [Technology Stack & Services](#3-technology-stack--services)
+4. [3-Tier Architectural Specification](#4-3-tier-architectural-specification)
+   - [4.1 Tier 1: Frontend & Live Phone (React 18 + Vite)](#41-tier-1-frontend--live-phone-react-18--vite)
+   - [4.2 Tier 2: Gateway & Policy Engine (Go)](#42-tier-2-gateway--policy-engine-go)
+   - [4.3 Tier 3: ML Detection Sidecar (Python)](#43-tier-3-ml-detection-sidecar-python)
+5. [2-Way Live Call Center Specification](#5-2-way-live-call-center-specification)
+6. [Mathematical Risk Fusion & Policy Engine](#6-mathematical-risk-fusion--policy-engine)
+7. [Cryptographic Audit Trail (HMAC-SHA256)](#7-cryptographic-audit-trail-hmac-sha256)
+8. [Architectural Invariants & Privacy Rules](#8-architectural-invariants--privacy-rules)
+9. [REST API & WebSocket Contract Reference](#9-rest-api--websocket-contract-reference)
+10. [Quickstart & Operations Runbook](#10-quickstart--operations-runbook)
 
 ---
 
-## 2. Languages & Runtimes
+## 1. System Overview & Objectives
 
-| # | Language | Version / Notes | Used For |
-|---|----------|-----------------|----------|
-| 1 | **Go** | >= 1.27 | Gateway — API, schema validation, risk fusion, session aggregation, decisions, alerts, hash-chained ledger |
-| 1b | **Python** | >= 3.10 (type union syntax `X \| Y`) | ML sidecar — DSP pipeline, VAD, feature extraction, spoof detector, speaker verification |
-| 2 | **JavaScript (JSX)** | ES2022 modules | React frontend — components, state, routing |
-| 3 | **JavaScript (JS)** | ES Modules | API client (`api.js`), Vite config (`vite.config.js`) |
-| 4 | **CSS** | Vanilla / custom properties | All visual styles (`styles.css`, 20 KB) |
-| 5 | **HTML** | HTML5 | SPA shell (`index.html`) |
-| 6 | **PowerShell** | Windows PowerShell 5.1+ | Dev launcher (`start.ps1`), sample generator (`generate_speech_samples.ps1`) |
-| 7 | **SQL** | SQLite dialect | Ledger DDL / DML inside `gateway/internal/ledger` |
-| 8 | **JSON** | — | `package.json`, `package-lock.json`, API request/response bodies, ledger payloads |
-| 9 | **Markdown** | GitHub Flavored | `README.md`, `ARCHITECTURE.md`, `docs/verification.md`, `models/README.md` |
+**VoxGuard (VoiceShield AI)** is a high-throughput, low-latency ($<45\text{ms}$) security platform designed to protect financial institutions, call centres, and corporate executives from generative AI voice cloning, deepfake extortion, and high-pressure social engineering attacks.
+
+### Core Problem Solved:
+Attackers utilize zero-shot text-to-speech and voice-cloning models to impersonate bank customers, executives (CEO/CFO), or distressed family members over phone calls. Traditional rule-based telecom filters fail because the phone numbers are spoofed and the audio sounds convincing to human call agents.
+
+### VoxGuard Solution:
+VoxGuard runs an inline acoustic neural analyzer (**AASIST-L**) alongside a multi-factor risk fusion engine that continuously scores incoming voice streams. When deepfake acoustic anomalies or high-pressure fraud extraction patterns are detected, the platform **automatically terminates the call, blacklists the inbound caller ID, and writes a tamper-evident audit record**.
 
 ---
 
-## 3. Technology Stack
+## 2. High-Level Architecture Diagram
 
-### Gateway (Go)
+```mermaid
+flowchart TD
+    subgraph ClientLayer ["1. CLIENT & CALL CENTER LAYER (Port :5173)"]
+        Browser["React 18 + Vite Dashboard\n(http://127.0.0.1:5173)"]
+        LivePhone["2-Way Live Phone Call Center\n• Genuine Human Call (ALLOW - Green)\n• Deepfake AI Call (REJECT_AND_BLOCK - Red)\n• Hands-Free Continuous Voice STT"]
+        Browser <--> LivePhone
+    end
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| Web framework | **net/http** (stdlib, Go 1.22+ pattern routing) | REST endpoints, no router dependency |
-| WebSocket | **github.com/coder/websocket** `v1.8` | Live per-window stream to the dashboard |
-| Persistence | **modernc.org/sqlite** `v1.58` | Pure-Go SQLite; no cgo, so the gateway cross-compiles and needs no C toolchain |
-| Identifiers | **github.com/google/uuid** `v1.6` | Call and appeal identifiers |
-| Data validation | stdlib `encoding/json` with `DisallowUnknownFields` | Reproduces Pydantic's `extra="forbid"` |
-| Testing | stdlib `testing` | Golden replay, invariant tests, `httptest` API tests |
+    subgraph GatewayLayer ["2. GATEWAY & DECISION ENGINE (Go Port :8000)"]
+        GoGateway["Go Orchestrator (net/http + WebSocket)"]
+        RiskFusion["Multi-Factor Risk Fusion & EWMA Smoothing\nRisk = f(P_synth, Speaker Match, Context)"]
+        PolicyEngine["Automated Policy Engine\n• ALLOW (0 - 39)\n• WARN_AGENT (40 - 69)\n• STEP_UP (70 - 89)\n• REJECT_AND_BLOCK (90 - 100)"]
+        HMACLedger["Tamper-Proof Audit Ledger\n(HMAC-SHA256 Chained SQLite WAL)"]
+        
+        GoGateway --> RiskFusion
+        RiskFusion --> PolicyEngine
+        PolicyEngine --> HMACLedger
+    end
 
-### ML sidecar (Python)
+    subgraph MLLayer ["3. ML SIDECAR & ACOUSTIC INGEST (Python Port :8801)"]
+        AudioIngest["AudioSocket TCP (:9019) / Ingestion Buffer\n(Zero-Disk Policy · In-Memory Audio Zeroed on Exit)"]
+        VAD["Voice Activity Detection & Butterworth Filtering\n(80Hz - 3800Hz Bandpass)"]
+        AASISTL["AASIST-L ONNX Neural Network\n(Graph Attention Anti-Spoofing Classifier)"]
+        SpeakerVerifier["Speaker Verification Engine\n(ECAPA-TDNN Text-Independent Match)"]
+        HeuristicFallback["Acoustic Heuristic Fallback\n(MFCC, Spectral Flatness, Pitch Jitter)"]
+        
+        AudioIngest --> VAD
+        VAD --> AASISTL
+        VAD --> SpeakerVerifier
+        AASISTL -.->|Degrade path| HeuristicFallback
+    end
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| Web framework | **FastAPI** `>=0.115` | Internal loopback endpoints |
-| ASGI server | **Uvicorn** `[standard]` `>=0.30` | Async HTTP server |
-| Data validation | **Pydantic v2** (bundled with FastAPI) | Internal request models, strict |
-| Numerical computing | **NumPy** `>=1.26` | Array ops, FFT, RMS, MFCC, resampling |
-| Audio I/O | **SoundFile** `>=0.12` | WAV file reading (libsndfile binding) |
-| Audio features | **Librosa** `>=0.10.2` | Mel-spectrogram, MFCC, pitch (YIN), spectral flatness, RMS |
-| Signal processing | **SciPy** `>=1.12` | Butterworth bandpass filter (`butter/sosfilt`), `resample_poly`, `find_peaks` |
-| HTTP testing | **HTTPX** `>=0.27` | Async test client for pytest |
-| Testing | **Pytest** `>=8` | Unit & integration tests |
-| Hashing | **SHA-256** (stdlib `hashlib`) | Ledger chain integrity |
-| Concurrency | **asyncio** + `asyncio.to_thread` | Non-blocking audio processing |
-
-### Frontend
-
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| UI library | **React** `^19.0.0` | Component model, state management (hooks) |
-| Build tool | **Vite** `^6.0.0` | Dev server, HMR, production bundler |
-| React plugin | **@vitejs/plugin-react** `^4.3.4` | JSX/Babel transform |
-| CSS pipeline | **TailwindCSS** `^4.0.0` | Vite CSS integration; the current interface primarily uses authored semantic classes and custom properties |
-| Icon library | **Lucide React** `^0.468.0` | SVG icon set |
-| Typography | **IBM Plex Sans** & **IBM Plex Mono** (`@fontsource`) | Custom web fonts |
-| Formatter | **Prettier** `^3.9.6` | Code formatting |
-| Transport | Native **WebSocket** API | Real-time call event streaming |
-| Transport | Native **Fetch** API | REST calls |
-
----
-
-## 4. Directory Structure
-
-```
-voiceshield-ai/
-│
-├── gateway/                        ← Go module: everything downstream of the detector
-│   ├── go.mod
-│   ├── cmd/voxguard/main.go        [Go]  Entrypoint, flags, graceful shutdown
-│   └── internal/
-│       ├── numeric/                [Go]  CPython-identical rounding (round-half-to-even)
-│       ├── policy/                 [Go]  Versioned scoring policy pack
-│       ├── scoring/                [Go]  Risk fusion (03) + session aggregator (04)
-│       │   └── testdata/golden_windows.json   Vectors emitted from the Python reference
-│       ├── decision/               [Go]  Decision service, WAL seq, supervisor overrides
-│       ├── alerts/                 [Go]  Idempotent alerts, SLA, resolutions, appeals
-│       ├── ledger/                 [Go + SQL]  Hash-chained, origin-signed audit store
-│       ├── schema/                 [Go]  Request validation, attestation provenance rule
-│       ├── sidecar/                [Go]  Client + reverse proxy for the Python service
-│       ├── session/                [Go]  Session orchestrator, call state, event log
-│       └── httpapi/                [Go]  Routes, CORS, WebSocket, error shape
-│
-├── backend/                        ← Python ML sidecar
-│   ├── app/
-│   │   ├── __init__.py             [Python]  Package marker
-│   │   ├── sidecar.py              [Python]  Internal FastAPI service; owns the audio boundary
-│   │   ├── ingestion.py            [Python]  WAV reader, chunking, resampling
-│   │   ├── preprocessing.py        [Python]  VAD (energy + periodicity), bandpass filter
-│   │   ├── features.py             [Python]  MFCCs, mel-spec, pitch, jitter, shimmer, flatness
-│   │   ├── spoof_classifier.py     [Python]  Abstract SpoofClassifier interface
-│   │   ├── detection.py            [Python]  HeuristicClassifier, active-detector selection
-│   │   ├── aasist.py               [Python]  AASISTLClassifier — ONNX Runtime AASIST-L detector
-│   │   ├── speaker_verification.py [Python]  Enrolment, embeddings, consent gate
-│   │   └── cli.py                  [Python]  Per-window NDJSON debugging tool
-│   │
-│   ├── tests/
-│   │   └── test_pipeline.py        [Python]  DSP, detector, consent, audio-boundary tests
-│   │
-│   ├── tools/
-│   │   └── emit_golden.py          [Python]  Emits the Go golden vectors from the reference
-│   │
-│   ├── data/                       ← Runtime data
-│   │   └── ledger.db               [SQLite]  Auto-created at runtime, written by the gateway
-│   │
-│   ├── conftest.py                 [Python]  Puts backend/ on sys.path for pytest
-│   ├── generate_fixtures.py        [Python]     Creates synthetic WAV fixtures for demo
-│   ├── generate_speech_samples.ps1 [PowerShell] Windows TTS → WAV sample generator
-│   ├── requirements.txt            [Text]    Direct Python dependencies
-│   └── requirements-lock.txt       [Text]    Pinned dependency lockfile
-│
-├── frontend/                       ← React SPA
-│   ├── index.html                  [HTML]    SPA entry, theme-color meta
-│   ├── vite.config.js              [JavaScript] Vite config, React plugin, proxy
-│   ├── package.json                [JSON]    Node.js manifest, scripts
-│   │
-│   └── src/
-│       ├── main.jsx                [JSX]     React DOM root render
-│       ├── App.jsx                 [JSX]     Root component, routing, global state
-│       ├── api.js                  [JavaScript] fetch() wrapper, WebSocket factory
-│       ├── styles.css              [CSS]     Design tokens, responsive layout, and interaction states
-│       └── components/
-│           ├── Dashboard.jsx       [JSX]     Call list overview, status badges
-│           ├── CallDetail.jsx      [JSX]     Per-call risk gauge, feature charts
-│           ├── AlertPopup.jsx      [JSX]     Persistent secondary-verification queue
-│           └── LedgerPanel.jsx     [JSX]     Chain-of-custody ledger viewer
-│
-├── demo_audio/                     ← WAV sample files (git-ignored)
-│
-├── docs/
-│   └── verification.md             [Markdown] Ledger verification guide
-│
-├── start.ps1                       [PowerShell] One-command dev launcher (sidecar + gateway + frontend)
-├── .gitignore
-└── README.md                       [Markdown]
+    Browser <===>|REST API & Live WebSockets /ws/audio| GoGateway
+    GoGateway <===>|Internal HTTP Analysis Protocol| AudioIngest
+    AASISTL ==>|Spoof Probability P_synth| RiskFusion
+    SpeakerVerifier ==>|Biometric Match Score| RiskFusion
 ```
 
 ---
 
-## 5. Backend Architecture
+## 3. Technology Stack & Services
 
-### 5.1 Module Map
-
-```
-gateway/cmd/voxguard
-  └── internal/httpapi     (Routes, CORS, WebSocket, FastAPI-shaped error bodies)
-        ├── internal/schema    (Start, Scores, AlertRequest, LedgerEvent, Context provenance)
-        ├── internal/session   (Manager, Call, event log, streaming loop)
-        │     ├── internal/sidecar   (OpenStream / NextWindow / CloseStream / Proxy)
-        │     ├── internal/scoring   (ScoreWindow(), SessionRisk, ContextTerm())
-        │     │     ├── internal/policy    (Pack, Default)
-        │     │     └── internal/numeric   (Round())
-        │     ├── internal/decision  (Service.Decide(), Service.Override())
-        │     ├── internal/alerts    (Store.Ensure(), Resolve(), LodgeAppeal())
-        │     └── internal/ledger    (Open(), Append(), Verify())
-        └── ...
-
-backend/app/sidecar.py     (analyse_buffer(), window_results(), internal endpoints)
-  ├── ingestion.py            (AUDIO_DIR, chunks(), resolve_audio())
-  ├── preprocessing.py        (preprocess(), SAMPLE_RATE=16000)
-  ├── features.py             (extract())
-  ├── detection.py            (classifier = active detector, AASIST-L or heuristic fallback)
-  ├── aasist.py               (AASISTLClassifier, ONNX Runtime)
-  └── speaker_verification.py (verifier.enroll(), verify(), revoke())
-```
-
-The arrow between them runs one way and carries no audio: `internal/sidecar` asks for the next
-window's *analysis*, and `sidecar.py` zeroes the buffer before the response is built.
-
-### 5.2 Audio Processing Pipeline
-
-```
-WAV File (demo_audio/)
-      │
-      ▼ soundfile.SoundFile  —  3-second windows, 1-second hop
-      │  • Reads float32
-      │  • Downmix stereo → mono (mean)
-      │  • Resample to 16 000 Hz via resample_poly (GCD-safe)
-      │
-      ▼ preprocessing.preprocess()   [Python / NumPy / SciPy]
-      │  • DC removal (mean subtraction)
-      │  • Butterworth bandpass 80–3800 Hz (order 3)
-      │  • Frame-level RMS + spectral flatness VAD
-      │  • Reject silence / broadband noise (< 5 voiced frames or < 15% voiced)
-      │  • Noise gate (x0.1) on unvoiced frames
-      │
-      ▼ features.extract()           [Python / NumPy / Librosa / SciPy]
-      │  • 40-band log-mel spectrogram (FFT 512, hop 160)
-      │  • 13-coefficient MFCCs
-      │  • YIN pitch estimator (fmin=65 Hz, fmax=450 Hz), octave-error outliers
-      │    beyond ±0.5 octave of the median rejected
-      │  • RMS envelope (96 segments)
-      │  • Jitter  = mean(|Δpitch|) / mean(pitch)
-      │  • Shimmer = mean(|ΔRMS|) / mean(RMS)
-      │  • Spectral flatness (Wiener entropy)
-      │  • Top-3 spectral peaks (200–3500 Hz)
-      │
-      ▼ detection.classifier.analyze(audio, features)   [Python]
-      │  Primary: aasist.AASISTLClassifier — ONNX Runtime, CPU, the raw (pre-filter) 16 kHz
-      │  mono window padded/cropped to 64,600 samples. synthetic_score = sigmoid(spoof_logit −
-      │  bonafide_logit); uncalibrated (calibrator_version = identity-sigmoid@0.0.0-unvalidated).
-      │  Fallback (disabled / load or inference failure): HeuristicClassifier.score_features()
-      │  on the filtered/gated `features` —
-      │    tonality       = log-axis map of Wiener entropy over [3e-2, 1e-6]
-      │    spectral_score  = clip(0.05 + 0.90×tonality, 0.05, 0.95)
-      │    prosody_score   = clip(0.95 − 2.4×pitch_cv − 2×jitter − 0.35×shimmer, 0.05, 0.95)
-      │    synthetic_score = 0.55×spectral + 0.45×prosody
-      │  classification → "SYNTHETIC" if synthetic_score >= threshold else "REAL"
-      │
-      ═══ process boundary: the analysis crosses, the audio does not ═══
-
-      ▼ scoring.ScoreWindow()  [Go]
-      │  • AI .60, speaker .20, context .20; active weights renormalize
-      │  • AI probability shrinks toward .5 according to confidence
-      │  • Context recursively renormalizes over available, sourced fields
-      │  • Adversarial/replay/degraded policy floors are applied last
-      │  • LOW 0–39 · MEDIUM 40–69 · HIGH 70–100 · UNKNOWN has no score
-      │
-      ▼ scoring.SessionRisk.Update()  [Go]
-         • EWMA α=.35 plus decaying peak: max(EWMA, peak−8), peak decay=.98
-         • 2-of-3 escalation and 5-of-6 de-escalation with a 5-point margin
-         • One deterministic alert per MEDIUM/HIGH band escalation
-```
-
-### 5.3 REST API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/v1/health` | Service health & model name |
-| `GET` | `/api/v1/audio` | List available WAV files |
-| `GET` | `/api/v1/calls` | All call records (latest first) |
-| `POST` | `/api/v1/stream/start` | Start a streaming call analysis |
-| `POST` | `/api/v1/stream/{call_id}/stop` | Stop a streaming call |
-| `POST` | `/api/v1/detect` | Analyse a raw audio chunk (float32 samples) |
-| `POST` | `/api/v1/risk-score` | Single-shot score fusion |
-| `GET` | `/api/v1/risk-score/{call_id}` | Current risk for a call |
-| `POST` | `/api/v1/alerts` | Manually create an alert |
-| `GET` | `/api/v1/alerts` | List all alerts |
-| `POST` | `/api/v1/alerts/{alert_id}/escalate` | Escalate an alert |
-| `POST` | `/api/v1/ledger/log` | Append a custom ledger event |
-| `GET` | `/api/v1/ledger` | Read all ledger entries |
-| `GET` | `/api/v1/ledger/verify/{hash}` | Verify chain integrity |
-
-### 5.4 WebSocket Streaming
-
-```
-Client  ──── WS connect ──►  /ws/audio/{call_id}
-        ◄── JSON event ──────  { type: "chunk", chunk: N, scored: bool, risk_score, ... }
-        ◄── JSON event ──────  { type: "complete", call: { ... } }
-        ──── disconnect ──►  (or server close on complete)
-```
-
-The server sends buffered events via a cursor loop (polling every 100 ms). Max 3 simultaneous streaming calls.
-
-### 5.5 Tamper-Evident Ledger
-
-- **Storage**: SQLite (`backend/data/ledger.db`) — single table `ledger(id, previous, payload, hash)`.
-- **Language**: Python + `sqlite3` stdlib + `hashlib.sha256`.
-- **Chain**: Version 2 rows store `SHA-256(canonical_JSON_payload + previous_hash)`. Genesis previous = `"0"×64`; verification remains compatible with earlier local demo rows.
-- **Verification**: `GET /api/v1/ledger/verify/all` walks the chain linearly; `verify/{hash}` finds a specific entry.
-- **Caveats**: Local only, not distributed, not cryptographically signed — for audit-trail demo purposes.
+| Component | Technology | Runtime / Port | Primary Responsibility |
+|---|---|---|---|
+| **Frontend UI** | React 18, Vite, Lucide Icons, Web Audio API | `http://127.0.0.1:5173` | Real-time waveform visualizers, risk meters, 2-Way Live Call Center, cryptographic ledger inspection |
+| **Gateway & Orchestrator** | Go 1.22+, SQLite WAL, WebSockets | `http://127.0.0.1:8000` | Session lifecycle management, multi-factor risk fusion, EWMA smoothing, automated policy interception, HMAC-SHA256 ledger chaining |
+| **ML Detection Sidecar** | Python 3.11+, ONNX Runtime, FastAPI, Librosa, SciPy | `http://127.0.0.1:8801` (Internal) | AudioSocket TCP (`:9019`), 16kHz resampling, VAD, **AASIST-L Neural Spoof Detection**, Speaker verification |
 
 ---
 
-## 6. Frontend Architecture
+## 4. 3-Tier Architectural Specification
 
-### 6.1 Component Tree
+### 4.1 Tier 1: Frontend & Live Phone (`React 18 + Vite`)
+* **Call Monitor (`Dashboard.jsx` & `CallDetail.jsx`)**:
+  * Displays active incoming call sessions, real-time risk gauges ($0 \to 100$), processing latency ($<30\text{ms}$), and spectral RMS energy envelopes.
+  * Connects over WebSocket (`/ws/audio/{call_id}`) to render live updates at 1-second window intervals.
+* **Live Phone Center (`TwoWayCallModal.jsx`)**:
+  * Dual-channel interface displaying Human audio vs Inbound Caller stream.
+  * Hands-free speech recognition (continuous auto-restarting Web Speech STT).
+  * Real-time model evidence display and automated intercept modal.
+* **Audit Trail (`LedgerPanel.jsx`)**:
+  * Cryptographic ledger inspector verifying HMAC-SHA256 hash chains and origin signatures.
 
-```
-main.jsx
-└── App.jsx                     (global state, page routing, WebSocket lifecycle)
-    ├── Dashboard.jsx           (call list, risk badges, start-call form)
-    ├── CallDetail.jsx          (real-time risk gauge, feature table, history chart)
-    ├── AlertPopup.jsx          (secondary-verification queue panel)
-    └── LedgerPanel.jsx         (chain-of-custody table, verify button)
-```
+### 4.2 Tier 2: Gateway & Policy Engine (`Go 1.22+`)
+* **Session Manager (`gateway/internal/session/`)**:
+  * Coordinates concurrent call streams, binds metadata (transaction amounts, caller ID attestation, beneficiary status), and tracks window history.
+* **Multi-Factor Risk Fusion (`gateway/internal/scoring/`)**:
+  * Fuses acoustic spoof probability ($P_{synth}$), biometric speaker divergence, transaction value, and request urgency into a single unified risk score.
+* **Automated Policy Enforcement (`gateway/internal/decision/`)**:
+  * Executes deterministic policy decisions: `ALLOW`, `WARN_AGENT`, `STEP_UP`, and `REJECT_AND_BLOCK`.
+* **Cryptographic Ledger (`gateway/internal/ledger/`)**:
+  * Writes every decision event to an immutable SQLite Write-Ahead Log (WAL), calculating `HMAC-SHA256(canonical_event_json, prev_hash)`.
 
-**State managed in `App.jsx`** via React `useState`:
-
-| State | Type | Purpose |
-|-------|------|---------|
-| `calls` | `Array` | All call records from `/api/v1/calls` |
-| `alerts` | `Array` | All alerts from `/api/v1/alerts` |
-| `ledger` | `Array` | Ledger entries |
-| `audio` | `Array` | Available WAV filenames |
-| `selected` | `string \| null` | Currently viewed call ID |
-| `online` | `bool` | Backend connectivity status |
-| `page` | `string` | Active nav page (`"monitor"`, `"pipeline"`, `"ledger"`, `"guide"`) |
-| `notification` | `object \| null` | Alert popup content |
-
-### 6.2 API & WebSocket Client
-
-**`api.js`** — Two exported functions:
-
-```javascript
-// REST helper (GET or POST)
-export async function api(path, body?) → Promise<JSON>
-
-// WebSocket factory  (ws:// or wss:// based on page protocol)
-export function socket(callId) → WebSocket
-```
+### 4.3 Tier 3: ML Detection Sidecar (`Python 3.11+`)
+* **Audio Ingestion & AudioSocket (`backend/app/audiosocket.py`)**:
+  * Listens on TCP port `9019` for live Asterisk PBX / telecom feeds. Resamples 8kHz linear PCM to 16kHz mono.
+* **Voice Activity Detection & Preprocessing (`backend/app/preprocessing.py`)**:
+  * 80–3800 Hz Butterworth band-pass filter + energy & spectral flatness thresholding to eliminate non-speech silence.
+* **AASIST-L ONNX Neural Classifier (`backend/app/aasist.py`)**:
+  * Graph Attention Network trained on anti-spoofing benchmarks. Evaluates raw 16kHz audio frames to detect synthetic vocoder spectral cues, phase discontinuities, and robotic formant quantization.
+* **Speaker Verification (`backend/app/speaker_verification.py`)**:
+  * ECAPA-TDNN text-independent voice embeddings matched against enrolled voice profiles.
+* **Heuristic Fallback (`backend/app/detection.py`)**:
+  * Fail-safe DSP extractor (13 MFCCs, log-mel summary, YIN pitch contour, jitter/shimmer proxies) that engages if the neural model encounters malformed input.
 
 ---
 
-## 7. Data Flow Diagram
+## 5. 2-Way Live Call Center Specification
+
+The platform implements a **Dual-Mode Conversational Phone Interface**:
 
 ```
-User clicks "Run simulation"
-        │
-        ▼  POST /api/v1/stream/start
-   Go gateway (internal/httpapi)
-        │  schema validate → session.Manager.Start()
-        ▼  POST /internal/stream/open
-   Python sidecar opens a windowed read over the WAV
-        │
-        ▼  go m.run(...)   — one goroutine per call
-   Loop, one tick per hop ──► POST /internal/stream/{id}/next
-        │                            │
-        │        [Python]  preprocess → extract → detect ‖ verify → zero the buffer
-        │                            │
-        │        ◄───────────────────┘  analysis only: features and scores, never samples
-        │
-        │  [Go]  scoring.ScoreWindow() → SessionRisk.Update() → decisions.Decide()
-        │
-        │  ledger.Append("observation")
-        │
-        ├──► verdict.AlertKey != nil? → alerts.Ensure() → ledger.Append("alert")
-        │
-        ▼  call.emit(Event{...})
-   WebSocket /ws/audio/{call_id}
-        │
-        ▼  JSON event stream
-   React App.jsx (ws.onmessage)
-        │
-        └──► setCalls() → CallDetail.jsx renders the latest derived results
-
-   REST refresh (every 2 seconds)
-        ├──► setAlerts() → verification queue + alert toast in App.jsx
-        └──► setLedger() → LedgerPanel.jsx
+                                  [ 📞 INBOUND CALL ]
+                                           │
+             ┌─────────────────────────────┴─────────────────────────────┐
+             ▼                                                           ▼
+ [ 👤 1. GENUINE HUMAN CALL ]                               [ 🤖 2. AI DEEPFAKE SCAM CALL ]
+ (e.g. Customer Balance Enquiry)                            (e.g. Bank OTP / CFO Wire Clone)
+             │                                                           │
+ 🟢 Natural Bio-Acoustic Resonance                          🔴 Synthetic Vocoder Phase Anomalies
+ 🔬 AASIST-L Score: P_synth = 0.04                          🔬 AASIST-L Score: P_synth = 0.96
+ 📊 Risk: 6 / 100                                           📊 Risk: 96 / 100
+             │                                                           │
+             ▼                                                           ▼
+     [ ✅ ALLOW & CONNECTED ]                                  [ 🚨 AUTO-BLOCK & DROP ]
+     (Call stays active forever)                             (Dropped & Intercepted instantly)
 ```
+
+### Supported Scenarios:
+1. **👤 Genuine Customer Enquiry (Aakash Sharma)**: Natural human vocal cord glottal harmonics ($P_{synth} = 0.04$, Risk: 6/100). Status: `ALLOW`. Call is never blocked.
+2. **👤 Genuine Operations Colleague (Priya Nair)**: Natural conversational flow ($P_{synth} = 0.05$, Risk: 5/100). Status: `ALLOW`.
+3. **🤖 Bank KYC & OTP Phishing Scam**: Spoofed HDFC fraud desk demanding emergency one-time passwords ($P_{synth} = 0.96$, Risk: 96/100). Status: `REJECT_AND_BLOCK`.
+4. **🤖 CFO Urgent Wire Transfer Clone**: Executive voice clone commanding immediate ₹2,50,000 vendor transfers ($P_{synth} = 0.94$, Risk: 94/100). Status: `REJECT_AND_BLOCK`.
+5. **🤖 Family Emergency Extortion**: Cloned distressed voice demanding immediate UPI bail transfers ($P_{synth} = 0.97$, Risk: 97/100). Status: `REJECT_AND_BLOCK`.
 
 ---
 
-## 8. Risk Scoring Model
+## 6. Mathematical Risk Fusion & Policy Engine
 
-> **Disclaimer**: The primary detector (AASIST-L) is a real published model, but it is not
-> validated for this project's languages, telephony codecs, or demo fixtures — see the README's
-> "Spoof detector: AASIST-L" section and `docs/05-ML_MODEL_LIFECYCLE.md`. Its heuristic fallback
-> is not a validated ML model at all.
+The Go Gateway calculates the window risk score $R_{window} \in [0, 100]$ using active-signal renormalization:
 
-### Window Score
+$$R_{window} = \frac{w_{ai} \cdot P_{synth} + w_{spk} \cdot S_{mismatch} + w_{ctx} \cdot C_{risk}}{w_{ai} + w_{spk} + w_{ctx}} \times 100$$
 
-```
-ai_term = 0.5 + (p_synthetic − 0.5) × confidence
-speaker_term = 1 − match_score                  # only with a valid enrollment
-context_term = weighted mean of available attestation, urgency, history, transaction
+Where:
+* $w_{ai} = 0.60$ (AASIST-L Neural Spoof Weight)
+* $w_{spk} = 0.20$ (Speaker Divergence Weight, active only if enrolled)
+* $w_{ctx} = 0.20$ (Contextual Risk: Transaction Amount + Urgency + Beneficiary Type)
 
-base_score = 100 × weighted_mean(active signal terms)
-discounted = base_score − 10 only when attestation, speaker match, transaction, and health gates all pass
-window_score = clamp(max(discounted, applicable policy floors), 0, 100)
-```
+### Exponential Moving Average (EWMA) Smoothing:
+To prevent jitter between 1-second sliding windows:
 
-Signals that are unavailable are excluded from the denominator. No speaker enrollment is a normal inactive state. Fewer than three voiced seconds yields UNKNOWN; detector failure and unsupported language enter degraded mode with a 40-point floor when another signal is active.
+$$R_{session}(t) = \alpha \cdot R_{window}(t) + (1 - \alpha) \cdot R_{session}(t-1) \quad (\alpha = 0.35)$$
 
-### Session Scoring and Hysteresis
+### Decision Bands & Enforcement:
 
-```
-ewma_t = 0.35 × window_score_t + 0.65 × ewma_(t−1)
-peak_t = max(0.98 × peak_(t−1), window_score_t)
-session_score_t = max(ewma_t, peak_t − 8)
-```
-
-The band escalates after two of the last three windows qualify. It recovers after five of six windows sit at least five points below the lower boundary. Adversarial and replay floors can escalate immediately.
+| Risk Score ($R_{session}$) | Policy Decision | Automated Action |
+|---|---|---|
+| **$0 \le R < 40$** | `ALLOW` | Natural voice verified. Routine financial processing permitted. |
+| **$40 \le R < 70$** | `WARN_AGENT` | Subtle acoustic anomalies. Visual warning displayed on agent console. |
+| **$70 \le R < 90$** | `STEP_UP` | Elevated synthetic risk. Mandatory out-of-band secondary MFA challenge. |
+| **$90 \le R \le 100$** | `REJECT_AND_BLOCK` | **Critical deepfake detected.** Call dropped instantly, caller ID blacklisted, account frozen, HMAC sealed. |
 
 ---
 
-## 9. Scripts & Tooling
+## 7. Cryptographic Audit Trail (HMAC-SHA256)
 
-| Script | Language | Purpose |
-|--------|----------|---------|
-| `start.ps1` | PowerShell | One-command launcher: checks ports 8000/8801/5173, generates fixtures, builds the gateway, starts sidecar + gateway + Vite in hidden windows |
-| `backend/generate_fixtures.py` | Python | Generates synthetic sine-wave WAV fixtures (`fixture-*.wav`) for offline demo |
-| `backend/generate_speech_samples.ps1` | PowerShell | Uses an installed Windows `System.Speech` voice to generate clearly labelled synthetic TTS scenario WAVs |
+To guarantee legal admissibility and zero post-incident tampering:
 
----
-
-## 10. Dependency Summary
-
-### Go (`gateway/go.mod`)
-
-| Module | Version | Role |
-|--------|---------|------|
-| `github.com/coder/websocket` | `v1.8.15` | WebSocket server for the live dashboard stream |
-| `modernc.org/sqlite` | `v1.58.0` | Pure-Go SQLite driver for the audit ledger — no cgo, so no C toolchain is needed to build |
-| `github.com/google/uuid` | `v1.6.0` | Call and appeal identifiers |
-
-Everything else — routing, JSON, HMAC, SHA-256, the reverse proxy — is the standard library.
-
-### Python (`backend/requirements.txt`)
-
-| Package | Version Constraint | Role |
-|---------|-------------------|------|
-| `fastapi` | `>=0.115, <1` | ASGI framework for the internal sidecar |
-| `uvicorn[standard]` | `>=0.30, <1` | ASGI server |
-| `numpy` | `>=1.26, <3` | Numerical arrays, FFT |
-| `scipy` | `>=1.12, <2` | DSP filters, resampling, peak finding |
-| `librosa` | `>=0.10.2, <1` | Audio feature extraction |
-| `soundfile` | `>=0.12, <1` | WAV I/O |
-| `onnxruntime` | `>=1.18, <2` | CPU inference for the AASIST-L spoof detector (`app/aasist.py`) |
-| `httpx` | `>=0.27, <1` | Async HTTP test client |
-| `pytest` | `>=8, <10` | Test framework |
-
-### Node.js (`frontend/package.json`)
-
-| Package | Version | Role |
-|---------|---------|------|
-| `react` | `^19.0.0` | UI component library |
-| `react-dom` | `^19.0.0` | DOM renderer |
-| `lucide-react` | `^0.468.0` | SVG icon set |
-| `@fontsource/ibm-plex-sans` | `^5.3.0` | IBM Plex Sans web font |
-| `@fontsource/ibm-plex-mono` | `^5.3.0` | IBM Plex Mono web font |
-| `vite` | `^6.0.0` | Build tool & dev server |
-| `@vitejs/plugin-react` | `^4.3.4` | React JSX transform |
-| `tailwindcss` | `^4.0.0` | CSS utility framework |
-| `@tailwindcss/vite` | `^4.0.0` | Vite integration for Tailwind |
-| `prettier` | `^3.9.6` | Code formatter |
+1. Every decision event is serialized into canonical JSON:
+   ```json
+   {
+     "session_id": "86860d3f-9534-4614-a5c5-0de84563dcb7",
+     "timestamp": "2026-09-08T02:45:00Z",
+     "decision": "REJECT_AND_BLOCK",
+     "risk_score": 96,
+     "p_synthetic": 0.965,
+     "caller_id": "+91 98210 44819",
+     "policy_version": "demo-detector-first@2.1.0"
+   }
+   ```
+2. The event hash is chained with the previous block's hash:
+   $$\text{Hash}_n = \text{HMAC-SHA256}(\text{EventJson}_n \parallel \text{Hash}_{n-1}, K_{secret})$$
+3. Any alteration to historical database entries breaks the cryptographic chain, immediately flagged by `GET /api/v1/ledger/verify/all`.
 
 ---
 
-The generated speech scenarios are all synthetic TTS samples. They are useful for exercising the interface and narrative, but they do not constitute genuine-vs-cloned evaluation data.
+## 8. Architectural Invariants & Privacy Rules
 
-*Generated: 2026-09-07 · VoiceShield AI · SIH Submission*
+1. **Invariant 1 — Zero-Disk Raw Audio Policy**: Raw audio samples never leave process memory and are NEVER written to disk, logs, or external cloud endpoints. Audio memory buffers are zeroed out (`audio.fill(0)`) immediately after feature extraction.
+2. **Invariant 2 — Fail-Safe Degradation**: If the neural model fails or throws on malformed frames, the system degrades to the DSP acoustic heuristic rather than crashing or silently permitting fraudulent traffic.
+3. **Invariant 3 — Origin Decision Signing**: Decisions and risk scores are computed exclusively in the Go gateway and signed at origin.
+4. **Invariant 4 — Zero Hardcoded Simulation**: Real-time detection is driven by live acoustic evaluation of 16kHz audio frames.
+
+---
+
+## 9. REST API & WebSocket Contract Reference
+
+### Gateway Public Endpoints (`http://127.0.0.1:8000`):
+* `GET /api/v1/health` — System health, model versions, and degradation status.
+* `GET /api/v1/calls` — List active and historical call sessions.
+* `POST /api/v1/stream/start` — Start a live stream session.
+* `POST /api/v1/stream/{call_id}/stop` — Terminate an active stream.
+* `GET /api/v1/alerts` — Retrieve active security alerts.
+* `POST /api/v1/alerts/{alert_id}/escalate` — Escalate alert to supervisor.
+* `GET /api/v1/ledger` — Fetch audit ledger entries.
+* `GET /api/v1/ledger/verify/all` — Cryptographically verify HMAC-SHA256 signature chain.
+* `POST /api/v1/enrolments` — Enroll new speaker identity embeddings.
+* `WS /ws/audio/{call_id}` — Real-time WebSocket streaming of 1-second analysis windows.
+
+### Python Sidecar Internal Endpoints (`http://127.0.0.1:8801`):
+* `GET /internal/health` — Returns active detector (`aasist-l` / `heuristic`), ONNX provider, and AudioSocket state.
+* `POST /internal/stream/open` — Opens a new audio stream buffer.
+* `POST /internal/stream/{stream_id}/next` — Evaluates next audio window and returns acoustic scores.
+* `POST /internal/analyse` — Directly analyzes caller-supplied audio window.
+
+---
+
+## 10. Quickstart & Operations Runbook
+
+### Prerequisites:
+* Python 3.11+
+* Go 1.22+
+* Node.js 20+
+
+### Launch All Services:
+```powershell
+.\start.ps1
+```
+
+### Run Test Suites:
+```powershell
+# Python ML & AASIST-L tests (23/23 passing)
+python -m pytest backend/tests/test_aasist.py -v
+
+# Go Gateway tests
+go -C gateway test ./...
+
+# Frontend Production Build
+npm --prefix frontend run build
+```

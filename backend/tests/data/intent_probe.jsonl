@@ -1,0 +1,50 @@
+{"text": "jo ankde abhi aapke handset pe blink kar rahe hain unhe bol dijiye", "labels": ["otp_request"]}
+{"text": "notification bar kholiye aur jo sankhya likhi hai wo padhiye", "labels": ["otp_request"]}
+{"text": "abhi jo short numeric string mili hai wo mujhe forward kar dijiye", "labels": ["otp_request"]}
+{"text": "system ne ek temporary key bheji hai aapko, wahi chahiye", "labels": ["otp_request"]}
+{"text": "plastic ke ulte taraf jo chhoti sankhya chhapi hai wo dekhiye", "labels": ["credential_request"]}
+{"text": "machine pe paisa nikalte waqt jo dabate hain wahi sankhya chahiye", "labels": ["credential_request"]}
+{"text": "aapka gupt shabd jo portal pe daalte hain wo confirm kar dijiye", "labels": ["credential_request"]}
+{"text": "wallet unlock karne ka jo chaar ank hai wo share kariye", "labels": ["credential_request"]}
+{"text": "sarkari pehchan patra ka jo lamba ank hai wo chahiye hoga", "labels": ["pii_request"]}
+{"text": "aapki maataji ka vivah se pehle ka naam kya tha", "labels": ["pii_request"]}
+{"text": "jis din aap paida hue the wo tareekh confirm kariye", "labels": ["pii_request"]}
+{"text": "kar vibhag wala dus akshar ka pehchan ank bataiye", "labels": ["pii_request"]}
+{"text": "pehle ek nishulk se thodi zyada rakam jama honi chahiye", "labels": ["payment_pressure"]}
+{"text": "ek chhota sa shulk lagta hai file aage badhane ke liye", "labels": ["payment_pressure"]}
+{"text": "barcode bhej raha hoon usme rakam daal dijiye jaldi", "labels": ["payment_pressure"]}
+{"text": "vibhag ki taraf se main adhikari bol raha hoon", "labels": ["authority_impersonation"]}
+{"text": "shakha pramukh ne mujhe aapse baat karne bola hai", "labels": ["authority_impersonation"]}
+{"text": "jaanch dal ka hissa hoon main, aapki patrawali mere paas hai", "labels": ["authority_impersonation"]}
+{"text": "aapke naam ka ek parcel roka gaya hai jaanch ke liye", "labels": ["authority_impersonation", "urgency_threat"]}
+{"text": "aapke kagzaat kisi galat kaam me istemal hue hain", "labels": ["authority_impersonation", "urgency_threat"]}
+{"text": "ye vaartalaap kisi aur ko batane ki zaroorat nahi hai", "labels": ["urgency_threat"]}
+{"text": "samay bahut kam hai, sochne ka mauka nahi milega", "labels": ["urgency_threat"]}
+{"text": "sampark tootne par sthiti aur bigad jayegi", "labels": ["urgency_threat"]}
+{"text": "agar sahyog nahi kiya toh sab kuch zabt kar liya jayega", "labels": ["urgency_threat"]}
+{"text": "vibhag se hoon, gupt sankhya aur rakam dono turant chahiye", "labels": ["credential_request", "payment_pressure", "authority_impersonation", "urgency_threat"]}
+{"text": "shakha se bol raha hoon, jo ank aaya wo bataiye warna khata band", "labels": ["otp_request", "authority_impersonation", "urgency_threat"]}
+{"text": "kal raat bijli chali gayi thi poore mohalle ki", "labels": []}
+{"text": "sabzi mandi se dhaniya le aana aate waqt", "labels": []}
+{"text": "gaadi ki service due hai agle hafte", "labels": []}
+{"text": "mummy ne bola tha jaldi ghar aa jana", "labels": []}
+{"text": "kitab wapas karni hai library me kal tak", "labels": []}
+{"text": "naya phone liya hai maine, camera achha hai", "labels": []}
+{"text": "chai pi kar nikalta hoon office ke liye", "labels": []}
+{"text": "bhaiya ka transfer ho gaya doosre sheher", "labels": []}
+{"text": "khaate me pichle mahine ka byaaj jama hua hai", "labels": []}
+{"text": "shakha kal band rahegi tyohar ki wajah se", "labels": []}
+{"text": "kisht ki tareekh badalwani hai agle mahine se", "labels": []}
+{"text": "paisa bhejne me do din lagte hain is madhyam se", "labels": []}
+{"text": "pehchan patra me pata badalwane gaya tha kendra pe", "labels": []}
+{"text": "gupt shabd yaad nahi aa raha portal ka", "labels": []}
+{"text": "vibhag ne naye niyam nikale hain akhbar me tha", "labels": []}
+{"text": "adhikari se milne ka samay liya hai kal ka", "labels": []}
+{"text": "jaanch report aa gayi hai aspatal se", "labels": []}
+{"text": "rakam wapas mil gayi thi mujhe pichle hafte", "labels": []}
+{"text": "shulk jama kar diya maine online hi", "labels": []}
+{"text": "ank ganit ka paper kaisa gaya tumhara", "labels": []}
+{"text": "sankhya galat likh di thi form me maine", "labels": []}
+{"text": "turant nikalna hai warna bus chhoot jayegi", "labels": []}
+{"text": "samay par pahunch jana meeting me", "labels": []}
+{"text": "sahyog ke liye dhanyawaad aapka", "labels": []}

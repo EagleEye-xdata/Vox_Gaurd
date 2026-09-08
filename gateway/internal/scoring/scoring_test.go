@@ -80,6 +80,24 @@ func TestActiveSignalRenormalisationMakesHighReachable(t *testing.T) {
 	}
 }
 
+// Intent arrives from the sidecar for each audio window, not from the static
+// call context. It must affect this window only, while an absent context still
+// applies its degraded floor.
+func TestWindowIntentRiskIsIndependentOfCallContext(t *testing.T) {
+	intent := 1.0
+	r, err := ScoreWindowWithIntent(det(0, 1, 3), nil, nil, &intent, P)
+	if err != nil {
+		t.Fatalf("ScoreWindowWithIntent: %v", err)
+	}
+	eqStrings(t, "active_signals", r.ActiveSignals, []string{"ai", "intent"})
+	if r.InactiveReasons["context"] != "context_unavailable" {
+		t.Fatalf("context absence was not preserved: %+v", r.InactiveReasons)
+	}
+	if *r.BaseScore <= 0 {
+		t.Fatalf("intent score was not fused: base_score=%v", *r.BaseScore)
+	}
+}
+
 // CLAUDE.md invariant 2: a check that could not run yields UNKNOWN or a degraded floor, never a
 // passing score.
 func TestAbsenceOfEvidenceIsNeverLow(t *testing.T) {

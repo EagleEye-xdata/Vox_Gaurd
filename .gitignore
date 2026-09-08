@@ -19,3 +19,5 @@ gateway/voxguard.exe~
 # see backend/models/README.md). Never commit the weights themselves.
 backend/models/*.onnx
 
+backend/data/
+*.bak
